@@ -340,7 +340,7 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
     <span class="pill" id="status" data-s="connecting"><i></i><span id="statusText">接続中…</span></span>
     <button class="txtbtn" id="inboxBtn" type="button" hidden>提出箱 <span class="badge" id="inboxBadge" hidden>0</span></button>
     <button class="txtbtn" id="mineBtn" type="button" hidden>提出した物 <span class="badge" id="mineBadge" hidden>0</span></button>
-    <button class="txtbtn ghost" id="tBtn" type="button">先生</button>
+    <button class="txtbtn ghost" id="tBtn" type="button">先生用はこちら</button>
     <button class="iconbtn" id="undoBtn" type="button" title="元に戻す (Ctrl+Z)" aria-label="元に戻す" disabled>
       <svg viewBox="0 0 24 24"><path d="M9 6 4 11l5 5M4 11h10a5 5 0 0 1 0 10h-3"/></svg>
     </button>
@@ -408,7 +408,7 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
       <li><code>firebase-config.js</code> に設定を貼りつける</li>
       <li>ルール（<code>database.rules.json</code>）を貼りつける</li>
     </ol>
-    <p class="note-txt">設定の前でも、この端末の中だけで動きを試せます。お試しモードでは、先生と生徒の両方の機能が使えます。</p>
+    <p class="note-txt">設定の前でも、この端末の中だけで動きを試せます。お試しモードでは、右上の「先生用はこちら」から合言葉なしで先生と生徒を切りかえられます。</p>
     <div class="row" style="margin-top:14px">
       <a class="txtbtn" href="https://github.com/iamochiai-collab/WHITE-BOARD#readme" target="_blank" rel="noopener">手順を見る</a>
       <button class="txtbtn primary" id="tryLocal" type="button">お試しモードで開く</button>
@@ -449,16 +449,27 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
   </div>
 </div>
 
-<!-- teacher login -->
+<!-- teacher -->
 <div class="modal" id="tModal" hidden>
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="tTitle">
-    <h2 id="tTitle">先生ログイン</h2>
-    <p class="sub" id="tMsg">先生は Google アカウントでログインします。ログインすると、すべての班のボードと提出箱が使えるようになります。</p>
+    <h2 id="tTitle">先生用</h2>
+    <p class="sub" id="tMsg"></p>
+    <div id="tEnter">
+      <label class="flabel" for="tCode">合言葉</label>
+      <input class="namein" id="tCode" type="password" autocomplete="off" maxlength="40">
+    </div>
+    <div id="tSetup" hidden>
+      <label class="flabel" for="tNew">合言葉（6文字以上）</label>
+      <input class="namein" id="tNew" type="password" autocomplete="new-password" maxlength="40">
+      <label class="flabel" for="tNew2">もう一度</label>
+      <input class="namein" id="tNew2" type="password" autocomplete="new-password" maxlength="40">
+    </div>
+    <p class="lockmsg" id="tErr" hidden></p>
     <div class="row">
       <button class="txtbtn" id="tClose" type="button">閉じる</button>
-      <button class="txtbtn danger" id="tLogout" type="button" hidden>ログアウト</button>
-      <button class="txtbtn primary" id="tClaim" type="button" hidden>このボードの先生として登録する</button>
-      <button class="txtbtn primary" id="tGoogle" type="button">Google でログイン</button>
+      <button class="txtbtn" id="tStudent" type="button" hidden>生徒にもどる</button>
+      <button class="txtbtn" id="tChange" type="button" hidden>合言葉を変える</button>
+      <button class="txtbtn primary" id="tGo" type="button">先生として入る</button>
     </div>
   </div>
 </div>

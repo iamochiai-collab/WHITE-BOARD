@@ -31,7 +31,8 @@ const state = {
   teacher: false, scale: 1, title: ''
 };
 let S = null;            // store (Firebase or local)
-let uid = null, isLocal = false, isGoogle = false, authApi = null;
+let uid = null, isLocal = false, authApi = null;
+let pendingTeacherOpen = location.hash === '#teacher';
 let peers = [];
 const peerDrag = new Map();
 const pendingFrames = new Set();
@@ -81,9 +82,7 @@ async function makeFirebaseStore() {
   const R = p => D.ref(db, p);
   authApi = {
     onUser: cb => A.onAuthStateChanged(auth, cb),
-    anon: () => A.signInAnonymously(auth),
-    google: () => A.signInWithPopup(auth, new A.GoogleAuthProvider()),
-    signOut: () => A.signOut(auth)
+    anon: () => A.signInAnonymously(auth)
   };
   return {
     write: (p, op, d) => op === 'set' ? D.set(R(p), d) : op === 'update' ? D.update(R(p), d) : D.remove(R(p)),
@@ -1144,36 +1143,76 @@ function onPeers() {
   else renderPeople();
 }
 
-/* ================= teacher login ================= */
-function openTeacher() {
-  const loggedIn = state.teacher;
-  $('tTitle').textContent = loggedIn ? '先生モード' : '先生ログイン';
-  $('tMsg').textContent = loggedIn
-    ? 'いま先生としてログインしています。ログアウトすると、この端末はふつうの参加者にもどります。'
-    : (isLocal ? 'お試しモードでは、先生の機能がはじめから使えます。' : '先生は Google アカウントでログインします。ログインすると、すべての班のボードと提出箱が使えるようになります。');
-  $('tGoogle').hidden = loggedIn || isLocal;
-  $('tLogout').hidden = !loggedIn || isLocal;
-  $('tClaim').hidden = true;
+/* ================= teacher (合言葉) ================= */
+let tMode = 'enter';
+const T_MSG = {
+  enter: '先生の合言葉を入れると、先生として入れます。先生は何人いても大丈夫です。すべての班のボードと提出箱が使えるようになります。',
+  first: 'まだ合言葉が決まっていません。最初に入る先生が、合言葉を決めてください。ほかの先生には、この合言葉を伝えてください。生徒には教えないでください。',
+  teacher: '先生として入っています。ほかの先生も、同じ合言葉を入れれば先生になれます。「生徒にもどる」で、この端末をふつうの参加者にもどせます。',
+  change: '新しい合言葉を決めます。変えると、ほかの先生は新しい合言葉で入り直すことになります（生徒に知られてしまったときなどに使ってください）。',
+  trial: 'お試しモードでは、合言葉なしで先生と生徒を切りかえられます。本番では、先生の合言葉を入れた人だけが先生になれます。'
+};
+function setTMode(m) {
+  tMode = m;
+  $('tEnter').hidden = m !== 'enter';
+  $('tSetup').hidden = !(m === 'first' || m === 'change');
+  $('tStudent').hidden = !(m === 'teacher');
+  $('tChange').hidden = !(m === 'teacher') || isLocal;
+  $('tGo').hidden = m === 'teacher';
+  $('tGo').textContent = { enter: '先生として入る', first: '合言葉を決めて先生になる', change: '合言葉を変える', trial: '先生として入る' }[m] || '';
+  $('tTitle').textContent = (m === 'teacher' || m === 'change') ? '先生モード' : '先生用';
+  $('tMsg').textContent = T_MSG[m];
+  $('tErr').hidden = true;
+}
+async function openTeacher() {
+  ['tCode', 'tNew', 'tNew2'].forEach(k => $(k).value = '');
+  if (state.teacher) setTMode('teacher');
+  else if (isLocal) setTMode('trial');
+  else { let set = false; try { set = (await S.get('meta/teacherCodeSet')) === true; } catch (e) {} setTMode(set ? 'enter' : 'first'); }
   $('tModal').hidden = false;
+  const f = !$('tEnter').hidden ? $('tCode') : (!$('tSetup').hidden ? $('tNew') : null);
+  if (f) setTimeout(() => f.focus(), 50);
 }
-async function teacherLogin() {
-  try { await authApi.google(); $('tModal').hidden = true; }
-  catch (e) {
-    const c = String((e && e.code) || '');
-    if (c.includes('popup-closed') || c.includes('cancelled')) return;
-    if (c.includes('unauthorized-domain')) toast('このサイトのアドレスが Firebase に登録されていません（README の手順4）');
-    else toast('ログインできませんでした');
-  }
+const tryWrite = (p, op, d) => S.write(p, op, d).then(() => true, () => false);
+async function teacherGo() {
+  const err = t => { $('tErr').textContent = t; $('tErr').hidden = false; };
+  $('tGo').disabled = true;
+  try {
+    if (tMode === 'trial') {
+      try { localStorage.setItem('wb-trial-role', 'teacher'); } catch (e) {}
+      $('tModal').hidden = true; toast('先生として入りました'); startSession(); return;
+    }
+    if (tMode === 'enter') {
+      const c = $('tCode').value.trim();
+      if (!c) return err('合言葉を入れてください');
+      if (!(await tryWrite('teachers/' + uid, 'set', c))) return err('合言葉がちがいます');
+      $('tModal').hidden = true; toast('先生として入りました'); startSession(); return;
+    }
+    if (tMode === 'first' || tMode === 'change') {
+      const a = $('tNew').value.trim(), b = $('tNew2').value.trim();
+      if (a.length < 6) return err('合言葉は6文字以上にしてください');
+      if (a !== b) return err('2つの合言葉が同じではありません');
+      if (!(await tryWrite('secret/teacherCode', 'set', a))) {
+        if (tMode === 'first') { setTMode('enter'); return err('ほかの先生がすでに合言葉を決めています。その合言葉で入ってください'); }
+        return err('合言葉を変えられませんでした');
+      }
+      await tryWrite('teachers/' + uid, 'set', a);
+      await tryWrite('meta/teacherCodeSet', 'set', true);
+      const first = tMode === 'first';
+      $('tModal').hidden = true;
+      toast(first ? '合言葉を決めて、先生になりました' : '合言葉を変えました。ほかの先生は入り直してください');
+      startSession();
+    }
+  } finally { $('tGo').disabled = false; }
 }
-async function teacherClaim() {
-  const ok = await write('teachers/' + uid, 'set', true);
-  if (ok) { $('tModal').hidden = true; toast('先生として登録しました'); startSession(); }
-  else toast('登録できませんでした。すでに先生が登録されています');
+async function backToStudent() {
+  if (isLocal) { try { localStorage.setItem('wb-trial-role', 'student'); } catch (e) {} }
+  else await tryWrite('teachers/' + uid, 'remove');
+  $('tModal').hidden = true; toast('生徒にもどりました'); startSession();
 }
-async function teacherLogout() {
+function closeTeacher() {
   $('tModal').hidden = true;
-  leavePresence();
-  try { await authApi.signOut(); } catch (e) {}
+  if (!state.group && !state.teacher && started && S) openWelcome(GID.test(location.hash.slice(1)) ? location.hash.slice(1) : null);
 }
 
 /* ================= session ================= */
@@ -1193,24 +1232,10 @@ function resetSession() {
 async function startSession() {
   resetSession();
   started = true; setStatus();
-  // 先生かどうか
-  if (isLocal) state.teacher = true;
-  else if (isGoogle) {
-    let t = null, any = null;
-    try { t = await S.get('teachers/' + uid); any = await S.get('teachers'); } catch (e) {}
-    if (t === true) state.teacher = true;
-    else {
-      if (any == null) {
-        $('tTitle').textContent = '先生の登録';
-        $('tMsg').textContent = 'このボードには、まだ先生が登録されていません。いまログインしている Google アカウントを、このボードの先生として登録しますか？（登録できるのは最初の1人だけです）';
-        $('tGoogle').hidden = true; $('tLogout').hidden = false; $('tClaim').hidden = false; $('tModal').hidden = false;
-      } else {
-        toast('この Google アカウントは先生として登録されていません');
-        teacherLogout(); return;
-      }
-    }
-  }
-  $('tBtn').textContent = state.teacher && !isLocal ? '先生モード' : '先生';
+  // 先生かどうか（合言葉が合っている人だけが secret を読める）
+  if (isLocal) { let r = 'teacher'; try { r = localStorage.getItem('wb-trial-role') || 'teacher'; } catch (e) {} state.teacher = r === 'teacher'; }
+  else { try { const c = await S.get('secret/teacherCode'); state.teacher = typeof c === 'string' && c.length > 0; } catch (e) { state.teacher = false; } }
+  $('tBtn').textContent = state.teacher ? '先生モード' : '先生用はこちら';
   titleEl.readOnly = !state.teacher;
   // ボード名・班の設定
   sessionUnsubs.push(S.onValue('meta/board', v => {
@@ -1233,7 +1258,6 @@ async function startSession() {
     const g = hashG || (GID.test(saved || '') ? saved : null) || state.groups[0].id;
     await setGroup(g);
     $('inboxBtn').hidden = false; subscribeInbox();
-    if (isLocal) { $('mineBtn').hidden = false; subscribeMine(); }
   } else {
     let prof = null;
     try { prof = await S.get('users/' + uid); } catch (e) {}
@@ -1243,12 +1267,14 @@ async function startSession() {
       if (hashG && hashG !== g && !state.lock) g = hashG;
       if (!(await setGroup(g))) await setGroup(prof.group);
     } else {
-      setHint(); openWelcome(hashG);
+      setHint();
+      if (!pendingTeacherOpen) openWelcome(hashG);
     }
     $('mineBtn').hidden = false; subscribeMine();
   }
   $('submitBtn').hidden = false;
   setStatus();
+  if (pendingTeacherOpen) { pendingTeacherOpen = false; if (!state.teacher) openTeacher(); }
 }
 
 /* ================= wiring ================= */
@@ -1270,10 +1296,11 @@ function bindUI() {
   $('nameIn').addEventListener('keydown', e => { if (e.key === 'Enter') startWelcome(); });
   $('wStart').onclick = startWelcome;
   $('tBtn').onclick = openTeacher;
-  $('tClose').onclick = () => { $('tModal').hidden = true; };
-  $('tGoogle').onclick = teacherLogin;
-  $('tClaim').onclick = teacherClaim;
-  $('tLogout').onclick = teacherLogout;
+  $('tClose').onclick = closeTeacher;
+  $('tGo').onclick = teacherGo;
+  $('tStudent').onclick = backToStudent;
+  $('tChange').onclick = () => { setTMode('change'); setTimeout(() => $('tNew').focus(), 50); };
+  ['tCode', 'tNew2'].forEach(k => $(k).addEventListener('keydown', e => { if (e.key === 'Enter') teacherGo(); }));
   $('inboxBtn').onclick = () => openSubs('inbox');
   $('mineBtn').onclick = () => openSubs('mine');
   $('sClose').onclick = () => { $('sModal').hidden = true; };
@@ -1281,7 +1308,8 @@ function bindUI() {
   $('vClose').onclick = () => { $('vModal').hidden = true; viewing = null; };
   $('vReviewSave').onclick = saveReview;
   $('vSave').onclick = saveViewed;
-  ['sModal', 'vModal', 'gModal', 'tModal'].forEach(k => $(k).addEventListener('click', e => { if (e.target === $(k)) { $(k).hidden = true; if (k === 'vModal') viewing = null; } }));
+  ['sModal', 'vModal', 'gModal'].forEach(k => $(k).addEventListener('click', e => { if (e.target === $(k)) { $(k).hidden = true; if (k === 'vModal') viewing = null; } }));
+  $('tModal').addEventListener('click', e => { if (e.target === $('tModal')) closeTeacher(); });
   const sel = $('bgSel');
   BGS.forEach(([k, n]) => { const o = document.createElement('option'); o.value = k; o.textContent = n; sel.appendChild(o); });
   sel.onchange = () => setBg(sel.value);
@@ -1334,7 +1362,7 @@ async function init() {
   S.connected(c => { online = c; setStatus(); });
   authApi.onUser(async user => {
     if (!user) { try { await authApi.anon(); } catch (e) { toast('ログインできませんでした。Firebase の「匿名」ログインが有効か確かめてください'); } return; }
-    uid = user.uid; isGoogle = !user.isAnonymous;
+    uid = user.uid;
     startSession();
   });
 }
