@@ -28,8 +28,10 @@ const state = {
   tool: 'pen', inkColor: '#22242A', inkW: 6, markColor: '#FFD60A', noteColor: '#FFE97A', textColor: '#22242A',
   group: null, groups: defaultGroups(6), lock: false, myGroup: null, myName: '',
   frames: [], frameId: null, items: new Map(), local: new Map(), sel: null, editing: null,
-  teacher: false, scale: 1, title: '', share: false, room: null, roomName: ''
+  teacher: false, scale: 1, base: 1, zoom: 1, panX: 0, panY: 0, title: '', share: false, room: null, roomName: '',
+  prevTool: 'pen', pencilOnly: false, presenting: false, present: null
 };
+try { state.pencilOnly = localStorage.getItem('wb-pencil-only') === '1'; } catch (e) {}
 let S = null, baseS = null;   // S: いまのルームの中を読み書きする / baseS: 全体
 let uid = null, isLocal = false, authApi = null;
 let pendingTeacherOpen = location.hash === '#teacher';
@@ -82,7 +84,8 @@ async function makeFirebaseStore() {
   const R = p => D.ref(db, p);
   authApi = {
     onUser: cb => A.onAuthStateChanged(auth, cb),
-    anon: () => A.signInAnonymously(auth)
+    anon: () => A.signInAnonymously(auth),
+    signOut: () => A.signOut(auth)
   };
   return {
     write: (p, op, d) => op === 'set' ? D.set(R(p), d) : op === 'update' ? D.update(R(p), d) : D.remove(R(p)),
@@ -237,15 +240,37 @@ function undo() {
 function layout() {
   const r = stage.getBoundingClientRect();
   const s = Math.max(0.05, Math.min((r.width - 12) / W, (r.height - 12) / H));
-  state.scale = s;
+  state.base = s;
   wrap.style.width = (W * s) + 'px'; wrap.style.height = (H * s) + 'px';
-  board.style.transform = 'scale(' + s + ')';
+  applyView();
+}
+function applyView() {
+  const z = state.zoom, s = state.base * z;
+  state.scale = s;
+  state.panX = clamp(state.panX, 0, W - W / z); state.panY = clamp(state.panY, 0, H - H / z);
+  board.style.transform = 'translate(' + (-state.panX * s) + 'px,' + (-state.panY * s) + 'px) scale(' + s + ')';
+  $('zoomLab').textContent = Math.round(z * 100) + '%';
+  $('zoomOut').disabled = z <= 1; $('zoomIn').disabled = z >= 3; $('zoomFit').disabled = z === 1;
   renderCursors();
+}
+function zoomTo(z, cx, cy) {
+  const z0 = state.zoom; z = clamp(Math.round(z * 100) / 100, 1, 3);
+  if (z === z0) return;
+  if (cx == null) { cx = state.panX + W / z0 / 2; cy = state.panY + H / z0 / 2; }
+  state.panX = cx - (cx - state.panX) * z0 / z; state.panY = cy - (cy - state.panY) * z0 / z;
+  state.zoom = z; applyView();
+}
+const ZOOMS = [1, 1.5, 2, 3];
+function zoomStep(dir) {
+  const z = state.zoom;
+  const next = dir > 0 ? (ZOOMS.find(v => v > z + 0.01) || 3) : ([...ZOOMS].reverse().find(v => v < z - 0.01) || 1);
+  zoomTo(next);
 }
 
 /* ================= tools ================= */
 function setTool(t) {
   if (state.editing) stopEdit();
+  if ((t === 'note' || t === 'text') && state.tool !== 'note' && state.tool !== 'text') state.prevTool = state.tool;
   state.tool = t; board.dataset.tool = t;
   document.querySelectorAll('.tool[data-tool]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tool === t)));
   if (t !== 'select') select(null);
@@ -273,6 +298,13 @@ function renderOpts() {
   } else if (t === 'marker') add(MARK_COLORS, 'markColor');
   else if (t === 'note') add(NOTE_COLORS, 'noteColor', 'note');
   else if (t === 'text') add(INK_COLORS, 'textColor');
+  if (t === 'pen' || t === 'marker' || t === 'eraser') {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'chip-toggle';
+    b.textContent = 'ペンだけで書く'; b.title = 'オンにすると、Apple Pencil などのペンだけで書けます。指で触ると、書かずにボードを動かします';
+    b.setAttribute('aria-pressed', String(state.pencilOnly));
+    b.onclick = () => { state.pencilOnly = !state.pencilOnly; try { localStorage.setItem('wb-pencil-only', state.pencilOnly ? '1' : '0'); } catch (e) {} renderOpts(); toast(state.pencilOnly ? 'ペンだけで書きます（指ではボードを動かします）' : '指でも書けるようにしました'); };
+    o.appendChild(b);
+  }
   o.hidden = !o.children.length; $('optsSep').hidden = o.hidden;
 }
 
@@ -367,7 +399,7 @@ function updateEl(el, id, it0, z) {
   const pd = peerDrag.get(id);
   el.classList.toggle('remote', !!pd && !state.local.get(id));
   if (pd) el.style.setProperty('--rc', pd.col || '#888');
-  const wantHandle = state.sel === id && it.type !== 'ink';
+  const wantHandle = state.sel === id && it.type !== 'ink' && state.tool === 'select';
   let h = el.querySelector(':scope > .handle');
   if (wantHandle && !h) { h = document.createElement('div'); h.className = 'handle'; h.setAttribute('aria-hidden', 'true'); el.appendChild(h); }
   else if (!wantHandle && h) h.remove();
@@ -475,6 +507,7 @@ function stopEdit() {
   state.editing = null;
   const el = els.get(id); if (!el) return;
   el.classList.remove('editing');
+  if (state.tool !== 'select' && state.sel === id) { state.sel = null; scheduleRender(); }
   const t = el._txt; t.contentEditable = 'false';
   const text = t.innerText.replace(/\n$/, '');
   flushText(curFK(), id, text);
@@ -489,6 +522,11 @@ function stopEdit() {
 }
 
 /* ================= pointer input ================= */
+function backTool() { return ['pen', 'marker', 'select', 'hand'].includes(state.prevTool) ? state.prevTool : 'pen'; }
+function startPan(e) {
+  act = { kind: 'pan', pid: e.pointerId, sx: e.clientX, sy: e.clientY, px: state.panX, py: state.panY };
+  board.setPointerCapture(e.pointerId); board.classList.add('panning'); e.preventDefault();
+}
 function pt(e) { const r = board.getBoundingClientRect(); return { x: (e.clientX - r.left) / state.scale, y: (e.clientY - r.top) / state.scale }; }
 let act = null;
 const laserTrail = [];
@@ -499,6 +537,8 @@ board.addEventListener('pointerdown', e => {
   if (state.editing && e.target.closest('.editing')) return;
   const p = pt(e), t = state.tool;
   if (state.editing) stopEdit();
+  if (t === 'hand') { startPan(e); return; }
+  if (state.pencilOnly && e.pointerType === 'touch' && t !== 'select') { startPan(e); return; }
   if (t === 'laser') {
     act = { kind: 'laser', pid: e.pointerId }; board.setPointerCapture(e.pointerId);
     presence({ l: 1, c: [Math.round(p.x), Math.round(p.y)] }); pushTrail(laserTrail, p); return;
@@ -517,12 +557,12 @@ board.addEventListener('pointerdown', e => {
     e.preventDefault();
     const w = 240, h = 240;
     const id = addItem({ type: 'note', x: r1(clamp(p.x - w / 2, 0, W - w)), y: r1(clamp(p.y - h / 2, 0, H - h)), w, h, color: state.noteColor, text: '' });
-    setTool('select'); select(id); requestAnimationFrame(() => startEdit(id));
+    setTool(backTool()); select(id); requestAnimationFrame(() => startEdit(id));
   } else if (t === 'text') {
     e.preventDefault();
     const id = addItem({ type: 'text', x: r1(clamp(p.x - 10, 0, W - 120)), y: r1(clamp(p.y - 28, 0, H - 60)), w: 420, color: state.textColor, fs: 36, text: '' });
     undoStack[undoStack.length - 1]._create = id;
-    setTool('select'); select(id); requestAnimationFrame(() => startEdit(id));
+    setTool(backTool()); select(id); requestAnimationFrame(() => startEdit(id));
   } else if (t === 'select') {
     const handle = e.target.closest('.handle');
     const el = e.target.closest('.item');
@@ -535,7 +575,7 @@ board.addEventListener('pointerdown', e => {
       const was = state.sel === id; select(id);
       act = { kind: 'drag', pid: e.pointerId, id, sx: p.x, sy: p.y, ox: it.x, oy: it.y, moved: false, was, fk: curFK() };
       board.setPointerCapture(e.pointerId); e.preventDefault();
-    } else select(null);
+    } else { select(null); if (state.zoom > 1) startPan(e); }
   }
 });
 
@@ -544,6 +584,11 @@ board.addEventListener('pointermove', e => {
   const p = pt(e);
   if (!act || act.kind !== 'ink') presence({ c: [Math.round(p.x), Math.round(p.y)] });
   if (!act || e.pointerId !== act.pid) return;
+  if (act.kind === 'pan') {
+    state.panX = act.px - (e.clientX - act.sx) / state.scale;
+    state.panY = act.py - (e.clientY - act.sy) / state.scale;
+    applyView(); return;
+  }
   if (act.kind === 'ink') {
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ce of (evs.length ? evs : [e])) {
@@ -577,6 +622,7 @@ board.addEventListener('pointermove', e => {
 function endGesture(e) {
   if (!act || e.pointerId !== act.pid) return;
   const a = act; act = null;
+  if (a.kind === 'pan') { board.classList.remove('panning'); return; }
   if (a.kind === 'ink') {
     livePath.removeAttribute('d');
     let pts = a.pts;
@@ -627,10 +673,17 @@ function hitInk(it, p, r) {
   for (let i = 0; i < q.length - 2; i += 2) if (segDist(px, py, q[i], q[i + 1], q[i + 2], q[i + 3]) <= r) return true;
   return false;
 }
+function hitBox(id, it, p) {
+  let h = it.h;
+  if (it.type === 'text') { const el = els.get(id); h = el ? el.offsetHeight : 60; }
+  return p.x >= it.x && p.x <= it.x + (+it.w || 0) && p.y >= it.y && p.y <= it.y + (+h || 0);
+}
 function eraseAt(p) {
   for (const [id, it] of state.items) {
-    if (it.type !== 'ink' || !validInk(it)) continue;
-    if (hitInk(it, p, 12 + (it.w || 4) / 2)) { act.gone.push([id, it]); delItem(act.fk, id); }
+    let hit = false;
+    if (it.type === 'ink') hit = validInk(it) && hitInk(it, p, 12 + (it.w || 4) / 2);
+    else if (it.type === 'note' || it.type === 'text' || it.type === 'image') hit = hitBox(id, it, p);
+    if (hit) { act.gone.push([id, it]); delItem(act.fk, id); }
   }
 }
 
@@ -808,6 +861,7 @@ function goFrame(id) {
   }
   presence({ f: id, d: null });
   renderCursors();
+  if (state.presenting) syncPresent();
 }
 function releasePeerDrag(k, it) { const o = peerDrag.get(k); if (o && o.released && Math.abs(it.x - o.x) < 1 && Math.abs(it.y - o.y) < 1) peerDrag.delete(k); }
 function renderFrames() {
@@ -815,6 +869,7 @@ function renderFrames() {
   $('flab').textContent = 'フレーム ' + (i + 1) + ' / ' + n;
   $('prevF').disabled = i <= 0; $('nextF').disabled = i >= n - 1;
   $('delF').disabled = n <= 1;
+  $('delF').hidden = !state.teacher; $('clearF').hidden = !state.teacher;
   const chips = $('chips'); chips.textContent = '';
   const here = new Map();
   peers.forEach(p => { if (!p.isMe && p.presence && p.presence.f) here.set(p.presence.f, p.presence.col || '#888'); });
@@ -843,7 +898,7 @@ function addFrame() {
   toast('フレーム ' + state.frames.length + ' を追加しました');
 }
 async function deleteFrame() {
-  if (state.frames.length <= 1) return;
+  if (!state.teacher || state.frames.length <= 1) return;
   const i = state.frames.findIndex(f => f.id === state.frameId);
   const ok = await confirmBox('フレーム ' + (i + 1) + ' を削除します。中の付箋や書き込みもすべて消え、元に戻せません。', 'フレームを削除');
   if (!ok) return;
@@ -857,7 +912,7 @@ async function deleteFrame() {
   $('undoBtn').disabled = !undoStack.length;
 }
 async function clearFrame() {
-  if (!state.items.size) return;
+  if (!state.teacher || !state.items.size) return;
   const ok = await confirmBox('このフレームの付箋と書き込みをすべて消します。「元に戻す」で戻せます。', '全部消す');
   if (!ok) return;
   const fk = curFK(), gone = [...state.items.entries()];
@@ -1056,8 +1111,8 @@ function openSubs(mode) {
   const o0 = document.createElement('option'); o0.value = 'all'; o0.textContent = 'すべての班'; fg.appendChild(o0);
   state.groups.forEach(g => { const o = document.createElement('option'); o.value = g.id; o.textContent = g.name; fg.appendChild(o); });
   if (keep) fg.value = keep; if (!fg.value) fg.value = 'all';
-  renderSubList();
   m.hidden = false;
+  renderSubList();
 }
 function renderSubList() {
   const mode = $('sModal').dataset.mode, box = $('sList'); box.textContent = '';
@@ -1071,22 +1126,52 @@ function renderSubList() {
     e.textContent = mode === 'inbox' ? 'まだ提出はありません。生徒が下の「先生に提出」を押すと、ここに届きます。' : 'まだ提出していません。ボードの下の「先生に提出」から送れます。';
     box.appendChild(e); return;
   }
+  box.classList.add('cards');
+  const want = [];
   rows.forEach(x => {
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'subrow';
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'card';
+    const th = document.createElement('div'); th.className = 'thumb';
+    const cached = thumbCache.get(x.sid);
+    if (cached) { const im = document.createElement('img'); im.alt = ''; im.src = cached; th.appendChild(im); }
+    else { th.textContent = '読みこみ中…'; want.push([x, th]); }
+    const cm = document.createElement('div'); cm.className = 'cm';
     const g = document.createElement('span'); g.className = 'g'; g.textContent = gName(x.g);
     const who = document.createElement('span'); who.className = 'who';
     who.textContent = mode === 'inbox' ? (String(x.name || '') || '名前なし') : 'フレーム ' + (x.fn || '?');
-    const st = document.createElement('span'); st.className = 'st';
     const tag = document.createElement('span'); tag.className = 'tag' + (x.rv && x.rv.ok ? ' ok' : '');
     tag.textContent = x.rv && x.rv.ok ? '確認済み' : (mode === 'inbox' ? '未確認' : '提出済み');
-    st.appendChild(tag);
-    const meta = document.createElement('span'); meta.className = 'meta';
+    cm.append(g, who, tag);
+    const meta = document.createElement('div'); meta.className = 'meta';
     meta.textContent = (mode === 'inbox' ? 'フレーム ' + (x.fn || '?') + '・' : '') + fmtTime(x.at);
-    b.append(g, who, st, meta);
-    if (x.rv && x.rv.m) { const c = document.createElement('span'); c.className = 'c'; c.textContent = (mode === 'inbox' ? 'ひとこと：' : '先生より：') + x.rv.m; b.appendChild(c); }
+    b.append(th, cm, meta);
+    if (x.rv && x.rv.m) { const c = document.createElement('div'); c.className = 'c'; c.textContent = (mode === 'inbox' ? 'ひとこと：' : '先生より：') + x.rv.m; b.appendChild(c); }
     b.onclick = () => openViewer(x, mode);
     box.appendChild(b);
   });
+  loadThumbs(want);
+}
+const thumbCache = new Map(), subCache = new Map();
+let thumbRun = 0;
+async function getSub(sid) {
+  if (subCache.has(sid)) return subCache.get(sid);
+  const d = await S.get('subData/' + sid);
+  if (isObj(d)) subCache.set(sid, d);
+  return isObj(d) ? d : null;
+}
+async function loadThumbs(list) {
+  const run = ++thumbRun;
+  for (const [x, th] of list) {
+    if (run !== thumbRun || $('sModal').hidden) return;
+    try {
+      const d = await getSub(x.sid);
+      if (!d) { th.textContent = '読みこめませんでした'; continue; }
+      const c = await drawFrame(isObj(d.items) ? Object.entries(d.items) : [], d.bg, 0.25);
+      const url = c.toDataURL('image/jpeg', 0.8);
+      thumbCache.set(x.sid, url);
+      if (run !== thumbRun) return;
+      th.textContent = ''; const im = document.createElement('img'); im.alt = ''; im.src = url; th.appendChild(im);
+    } catch (e) { th.textContent = '読みこめませんでした'; }
+  }
 }
 let viewing = null;
 async function openViewer(x, mode) {
@@ -1112,7 +1197,7 @@ async function openViewer(x, mode) {
   }
   m.hidden = false;
   try {
-    const d = await S.get('subData/' + x.sid);
+    const d = await getSub(x.sid);
     if (!viewing || viewing.x !== x) return;
     if (!isObj(d)) { toast('提出物を読み込めませんでした'); return; }
     viewing.data = d;
@@ -1148,6 +1233,7 @@ function presence(patch) {
     const o = Object.assign({ name: state.teacher ? '先生' : (state.myName || ''), col: myColor(), t: Date.now() }, presObj);
     for (const k in o) if (o[k] == null) delete o[k];
     S.write(presPath, 'set', o).catch(() => {});
+    if (state.presenting) pushPointer(o);
   }, wait);
 }
 function joinPresence() {
@@ -1434,7 +1520,9 @@ function resetSession() {
   ['inboxBtn', 'mineBtn', 'submitBtn', 'cmpBtn'].forEach(k => $(k).hidden = true);
   closeCompare(); state.share = false;
   ['modal', 'wModal', 'gModal', 'sModal', 'vModal', 'cModal'].forEach(k => $(k).hidden = true);
-  myIndex = []; allSubs = []; imgCache.clear();
+  myIndex = []; allSubs = []; imgCache.clear(); thumbCache.clear(); subCache.clear();
+  closePresent(); state.presenting = false; state.present = null; $('whoBar').hidden = true;
+  ['distBtn', 'presentBtn'].forEach(k => $(k).hidden = true); $('dModal').hidden = true;
   state.title = ''; titleEl.value = '';
   undoStack.length = 0; $('undoBtn').disabled = true;
 }
@@ -1447,13 +1535,16 @@ async function startSession() {
   $('tBtn').textContent = state.teacher ? '先生モード' : '先生用はこちら';
   titleEl.readOnly = !state.teacher;
   titleEl.placeholder = state.roomName || '無題のボード';
-  $('rmDelete').hidden = !state.teacher;
+  $('rmDelete').hidden = !state.teacher; $('rmSwitch').hidden = state.teacher;
+  renderPresentBtn();
   // ボード名・班の設定
   sessionUnsubs.push(S.onValue('meta/board', v => {
     state.title = isObj(v) && typeof v.title === 'string' ? v.title : '';
     if (document.activeElement !== titleEl) titleEl.value = state.title;
   }, () => {}));
   sessionUnsubs.push(S.onValue('meta/share', v => { state.share = v === true; updateCmpBtn(); }, () => {}));
+  sessionUnsubs.push(S.onValue('meta/present', onPresent, () => {}));
+  sessionUnsubs.push(S.onValue('meta/pointer', onPointer, () => {}));
   let groupsReady; const groupsLoaded = new Promise(r => { groupsReady = r; });
   sessionUnsubs.push(S.onValue('meta/groups', v => {
     const list = isObj(v) ? asList(v.list).filter(g => isObj(g) && GID.test(g.id)).map(g => ({ id: g.id, name: String(g.name || '').slice(0, 12) || g.id.slice(1) + '班' })) : [];
@@ -1478,6 +1569,7 @@ async function startSession() {
       let g = prof.group;
       if (hashG && hashG !== g && !state.lock) g = hashG;
       if (!(await setGroup(g))) await setGroup(prof.group);
+      showWho();
     } else {
       setHint();
       if (!pendingTeacherOpen) openWelcome(hashG);
@@ -1487,6 +1579,144 @@ async function startSession() {
   $('submitBtn').hidden = false;
   setStatus(); updateCmpBtn();
   if (pendingTeacherOpen) { pendingTeacherOpen = false; if (!state.teacher) openTeacher(); }
+}
+
+/* ================= 全班に配る ================= */
+function openDistribute() {
+  if (!state.teacher || !state.group) return;
+  const box = $('dList'); box.textContent = '';
+  state.groups.forEach(g => {
+    const l = document.createElement('label');
+    const c = document.createElement('input'); c.type = 'checkbox'; c.value = g.id; c.checked = g.id !== state.group;
+    l.append(c, document.createTextNode(g.name)); box.appendChild(l);
+  });
+  $('dModal').hidden = false;
+}
+async function distribute() {
+  const gs = [...$('dList').querySelectorAll('input:checked')].map(c => c.value);
+  if (!gs.length) { toast('配る班を選んでください'); return; }
+  stopEdit();
+  $('dGo').disabled = true;
+  const items = [...state.items.values()], bg = (curFrame() && curFrame().bg) || 'plain', order = Date.now();
+  let okAll = true;
+  for (const g of gs) {
+    const fid = rid(), obj = {};
+    items.forEach(v => { const c = Object.assign({}, v, { by: uid, ts: Date.now() }); obj[rid()] = encodeItem(c); });
+    const ok1 = await write('groups/' + g + '/frames/' + fid, 'set', { order, bg });
+    const ok2 = !items.length || await write('groups/' + g + '/items/' + fid, 'set', obj);
+    okAll = okAll && ok1 && ok2;
+  }
+  $('dGo').disabled = false; $('dModal').hidden = true;
+  toast(okAll ? gs.length + 'つの班に配りました（それぞれの班の最後のフレームに入っています）' : '配れなかった班があります');
+}
+
+/* ================= 先生の画面をみんなに見せる ================= */
+let presUnsubI = null, presItems = new Map(), presKey = '', presDrawT = 0, presDismissed = '';
+const presTrail = [];
+function syncPresent() {
+  if (!state.presenting || !state.group || !state.frameId) return;
+  const n = state.frames.findIndex(f => f.id === state.frameId) + 1;
+  S.write('meta/present', 'set', { on: true, g: state.group, f: state.frameId, fn: n, by: uid, t: Date.now() }).catch(() => {});
+}
+let lastPointerL = false;
+function pushPointer(o) {
+  if (o.l && Array.isArray(o.c)) { S.write('meta/pointer', 'set', { c: o.c, l: 1, t: Date.now() }).catch(() => {}); lastPointerL = true; }
+  else if (lastPointerL) { S.write('meta/pointer', 'set', { l: 0, t: Date.now() }).catch(() => {}); lastPointerL = false; }
+}
+async function togglePresent() {
+  if (!state.teacher) return;
+  if (state.presenting) {
+    await write('meta/present', 'remove');
+    state.presenting = false; toast('みんなに見せるのをやめました');
+  } else {
+    state.presenting = true; syncPresent();
+    S.onDisconnectRemove('meta/present');
+    toast('みんなの画面に、この画面を映しています。レーザーも見えます');
+  }
+  renderPresentBtn();
+}
+function renderPresentBtn() {
+  const b = $('presentBtn');
+  b.hidden = !state.teacher;
+  b.textContent = state.presenting ? '見せるのをやめる' : 'みんなに見せる';
+  b.className = 'txtbtn' + (state.presenting ? ' danger' : '');
+  $('distBtn').hidden = !state.teacher;
+}
+function onPresent(v) {
+  const p = isObj(v) && v.on === true && GID.test(v.g || '') && typeof v.f === 'string' ? v : null;
+  state.present = p;
+  if (state.teacher) { state.presenting = !!(p && p.by === uid); renderPresentBtn(); return; }
+  if (!p) { closePresent(); return; }
+  const key = p.g + '/' + p.f;
+  $('pSub').textContent = gName(p.g) + '・フレーム ' + (p.fn || '');
+  if (key !== presKey) {
+    presKey = key;
+    if (presUnsubI) presUnsubI();
+    presItems = new Map();
+    presUnsubI = S.onChildren('groups/' + p.g + '/items/' + p.f, {
+      add: (k, v2) => { presItems.set(k, v2); drawPresent(); },
+      change: (k, v2) => { presItems.set(k, v2); drawPresent(); },
+      remove: k => { presItems.delete(k); drawPresent(); }
+    }, () => {});
+    drawPresent();
+  }
+  if (presDismissed !== key) $('pModal').hidden = false;
+}
+function closePresent() {
+  if (presUnsubI) { presUnsubI(); presUnsubI = null; }
+  presKey = ''; presItems = new Map(); presDismissed = '';
+  $('pModal').hidden = true;
+}
+function drawPresent() {
+  clearTimeout(presDrawT);
+  presDrawT = setTimeout(async () => {
+    const p = state.present; if (!p) return;
+    const c = await drawFrame([...presItems.entries()], 'plain', 1);
+    const g = $('pCanvas').getContext('2d'); g.clearRect(0, 0, W, H); g.drawImage(c, 0, 0);
+  }, 200);
+}
+let presLaserRaf = 0;
+function onPointer(v) {
+  if (state.teacher || !state.present || !isObj(v)) return;
+  if (v.l && Array.isArray(v.c) && isFinite(v.c[0]) && isFinite(v.c[1])) { presTrail.push({ x: +v.c[0], y: +v.c[1], t: performance.now() }); if (presTrail.length > 40) presTrail.shift(); }
+  if (!presLaserRaf) presLaserRaf = requestAnimationFrame(drawPresLaser);
+}
+function drawPresLaser() {
+  presLaserRaf = 0;
+  const g = $('pLaser').getContext('2d'), now = performance.now();
+  g.clearRect(0, 0, W, H);
+  const live = presTrail.filter(q => now - q.t < 900); presTrail.length = 0; presTrail.push(...live);
+  if (!live.length) return;
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  for (let i = 1; i < live.length; i++) {
+    const a = live[i - 1], b = live[i], f = 1 - (now - b.t) / 900;
+    g.strokeStyle = 'rgba(235,40,40,' + (0.55 * f) + ')'; g.lineWidth = 12 * f + 2;
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+  }
+  const hd = live[live.length - 1];
+  g.fillStyle = 'rgba(255,60,50,.95)'; g.shadowColor = 'rgba(255,40,40,.9)'; g.shadowBlur = 20;
+  g.beginPath(); g.arc(hd.x, hd.y, 11, 0, Math.PI * 2); g.fill(); g.shadowBlur = 0;
+  presLaserRaf = requestAnimationFrame(drawPresLaser);
+}
+
+/* ================= 別の人として入る ================= */
+let whoT = 0;
+function showWho() {
+  if (state.teacher || !state.myName) return;
+  $('whoText').textContent = '';
+  const b = document.createElement('b'); b.textContent = state.myName;
+  $('whoText').append(b, document.createTextNode(' さんとして入っています（' + gName(state.group) + '）'));
+  $('whoBar').hidden = false;
+  clearTimeout(whoT); whoT = setTimeout(() => { $('whoBar').hidden = true; }, 12000);
+}
+async function switchPerson() {
+  $('whoBar').hidden = true; $('rmModal').hidden = true;
+  if (isLocal) {
+    try { localStorage.setItem('wb-trial-role:' + state.room, 'student'); } catch (e) {}
+    uid = 'trial-' + rid(); startSession(); return;
+  }
+  resetSession();
+  try { await authApi.signOut(); } catch (e) { toast('切りかえられませんでした'); }
 }
 
 /* ================= rooms ================= */
@@ -1584,7 +1814,7 @@ function openRoomInfo() {
   $('rmTitle').textContent = state.roomName || 'ルーム';
   $('rmCode').textContent = state.room;
   $('rmLink').value = roomLink(state.room);
-  $('rmDelete').hidden = !state.teacher;
+  $('rmDelete').hidden = !state.teacher; $('rmSwitch').hidden = state.teacher;
   $('rmModal').hidden = false;
 }
 async function copyLink() {
@@ -1640,6 +1870,23 @@ function bindUI() {
   $('wTeacher').onclick = () => { $('wModal').hidden = true; openTeacher(); };
   $('tBtn').onclick = openTeacher;
   $('roomBtn').onclick = openRoomInfo;
+  $('rmSwitch').onclick = switchPerson;
+  $('whoSwitch').onclick = switchPerson;
+  $('whoOk').onclick = () => { $('whoBar').hidden = true; };
+  $('zoomIn').onclick = () => zoomStep(1);
+  $('zoomOut').onclick = () => zoomStep(-1);
+  $('zoomFit').onclick = () => zoomTo(1);
+  stage.addEventListener('wheel', e => {
+    if (anyModal()) return;
+    if (e.ctrlKey) { e.preventDefault(); const r = board.getBoundingClientRect(); zoomTo(state.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), (e.clientX - r.left) / state.scale, (e.clientY - r.top) / state.scale); return; }
+    if (state.zoom > 1) { e.preventDefault(); state.panX += e.deltaX / state.scale; state.panY += e.deltaY / state.scale; applyView(); }
+  }, { passive: false });
+  $('distBtn').onclick = openDistribute;
+  $('dCancel').onclick = () => { $('dModal').hidden = true; };
+  $('dGo').onclick = distribute;
+  $('dAll').onclick = () => $('dList').querySelectorAll('input').forEach(c => { c.checked = true; });
+  $('presentBtn').onclick = togglePresent;
+  $('pClose').onclick = () => { presDismissed = presKey; $('pModal').hidden = true; };
   $('rmClose').onclick = () => { $('rmModal').hidden = true; };
   $('rmCopy').onclick = copyLink;
   $('rmLeave').onclick = leaveRoom;
@@ -1700,7 +1947,7 @@ function bindUI() {
   document.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) || '';
     if (anyModal()) {
-      if (e.key === 'Escape') { if (!$('cModal').hidden) { closeCompare(); return; } ['sModal', 'vModal', 'gModal', 'tModal', 'rmModal'].forEach(k => $(k).hidden = true); viewing = null; }
+      if (e.key === 'Escape') { if (!$('cModal').hidden) { closeCompare(); return; } ['sModal', 'vModal', 'gModal', 'tModal', 'rmModal', 'dModal'].forEach(k => $(k).hidden = true); viewing = null; }
       return;
     }
     if (state.editing || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
@@ -1709,7 +1956,10 @@ function bindUI() {
     if ((e.key === 'Delete' || e.key === 'Backspace') && state.sel) { e.preventDefault(); deleteItem(state.sel); return; }
     if (e.key === 'Escape') { select(null); return; }
     if (e.key === 'Enter' && state.sel) { e.preventDefault(); startEdit(state.sel); return; }
-    const map = { v: 'select', p: 'pen', m: 'marker', e: 'eraser', n: 'note', t: 'text', l: 'laser' };
+    if (e.key === '+' || e.key === ';') { zoomStep(1); return; }
+    if (e.key === '-') { zoomStep(-1); return; }
+    if (e.key === '0') { zoomTo(1); return; }
+    const map = { v: 'select', h: 'hand', p: 'pen', m: 'marker', e: 'eraser', n: 'note', t: 'text', l: 'laser' };
     const t = map[e.key.toLowerCase()]; if (t) setTool(t);
   });
   new ResizeObserver(layout).observe(stage);

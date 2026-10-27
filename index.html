@@ -317,6 +317,39 @@ button{cursor:pointer}
 @media (prefers-reduced-motion:reduce){.cursor{transition:none}.toast{transition:none}}
 
 [hidden]{display:none!important}
+.board .item.editing{pointer-events:auto!important}
+.board[data-tool="hand"]{cursor:grab}
+.board.panning{cursor:grabbing}
+.zoombar{position:absolute;right:8px;bottom:8px;z-index:5;display:flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;box-shadow:var(--shadow)}
+.zoombar .iconbtn{width:34px;height:34px;border:0}
+.zoombar #zoomLab{min-width:46px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.zoombar .txtbtn{padding:6px 10px}
+.whobar{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:55;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;max-width:calc(100% - 16px);background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:8px 10px;box-shadow:var(--shadow);font-size:14px}
+.whobar b{color:var(--accent)}
+.chip-toggle{flex:none;border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:5px 6px;font-size:10.5px;line-height:1.3;width:52px;text-align:center}
+.chip-toggle[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.dlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.dlist label{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg);font-weight:700}
+.present{padding:10px;background:#1B1F27}
+.phead .txtbtn{color:var(--fg)}
+.pbox{width:100%;height:100%;display:flex;flex-direction:column;gap:8px}
+.phead{display:flex;align-items:center;gap:10px;color:#fff;flex-wrap:wrap}
+.phead b{font-size:18px;font-family:var(--f-display)}
+.psub{font-size:13px;opacity:.8}
+.phead .grow{flex:1}
+.pstage{flex:1;min-height:0;display:grid;place-items:center}
+.pwrap{position:relative;aspect-ratio:16/9;width:min(100%,calc((100vh - 90px) * 16 / 9));max-width:100%;border-radius:8px;overflow:hidden;background:#FCFCF9}
+.pwrap canvas{position:absolute;inset:0;width:100%;height:100%}
+.subs.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;border:0;overflow:visible}
+.card{display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:8px;min-width:0}
+.card:hover{border-color:var(--accent)}
+.card .thumb{aspect-ratio:16/9;max-width:100%;border-radius:8px;background:#FCFCF9;border:1px solid var(--line);overflow:hidden;display:grid;place-items:center;color:#98A0AE;font-size:12px}
+.card .thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.card .cm{display:flex;align-items:center;gap:6px;min-width:0}
+.card .cm .g{font-weight:700;color:var(--accent);white-space:nowrap}
+.card .cm .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.card .meta{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.card .c{font-size:12px;background:var(--bg);border-radius:8px;padding:6px 8px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
 .roomchip{max-width:200px;overflow:hidden;text-overflow:ellipsis;font-weight:700}
 .roomchip span{overflow:hidden;text-overflow:ellipsis}
 .lbhead{display:flex;gap:14px;align-items:center;margin-bottom:18px}
@@ -384,6 +417,7 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
 
   <nav class="tools" id="tools" aria-label="道具">
     <button class="tool" data-tool="select" type="button" title="選択・移動 (V)"><svg viewBox="0 0 24 24"><path d="M6 3l13 8-6 1.6L10 19z"/></svg><span>選択</span></button>
+    <button class="tool" data-tool="hand" type="button" title="移動（拡大しているとき、ボードを動かす） (H)"><svg viewBox="0 0 24 24"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10V4.5a1.5 1.5 0 0 1 3 0V11M14 10.5V6a1.5 1.5 0 0 1 3 0v7c0 4-2.5 7-6 7-2.5 0-4-1.2-5.5-3.5L3.8 13a1.4 1.4 0 0 1 2.3-1.6L8 14"/></svg><span>移動</span></button>
     <button class="tool" data-tool="pen" type="button" title="ペン (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1.2-4.2L16 5l3 3L8.2 18.8z M14 7l3 3"/></svg><span>ペン</span></button>
     <button class="tool" data-tool="marker" type="button" title="マーカー (M)"><svg viewBox="0 0 24 24"><path d="M4 21h8M7 16l9-11 4 3.3-9 11H7z M7 16l-1 3"/></svg><span>マーカー</span></button>
     <button class="tool" data-tool="eraser" type="button" title="消しゴム (E)"><svg viewBox="0 0 24 24"><path d="M9 20h11M4.5 14.5l9-9 6 6-8.5 8.5H9z M8.5 10.5l6 6"/></svg><span>消しゴム</span></button>
@@ -397,6 +431,13 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
 
   <main class="stage" id="stage">
     <div class="ctx" id="ctx" hidden></div>
+    <div class="whobar" id="whoBar" hidden><span id="whoText"></span><button class="txtbtn" id="whoSwitch" type="button">ちがう人はこちら</button><button class="txtbtn primary" id="whoOk" type="button">OK</button></div>
+    <div class="zoombar" id="zoombar">
+      <button class="iconbtn" id="zoomOut" type="button" aria-label="小さくする" title="小さくする"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <span id="zoomLab">100%</span>
+      <button class="iconbtn" id="zoomIn" type="button" aria-label="大きくする" title="大きくする"><svg viewBox="0 0 24 24"><path d="M6 12h12M12 6v12"/></svg></button>
+      <button class="txtbtn" id="zoomFit" type="button">全体</button>
+    </div>
     <div class="wrap" id="wrap">
       <div class="board nogroup" id="board" data-tool="pen">
         <div class="bgl" id="bgl"></div>
@@ -420,6 +461,8 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
     <button class="txtbtn" id="clearF" type="button">全消去</button>
     <button class="txtbtn danger" id="delF" type="button">フレーム削除</button>
     <button class="txtbtn" id="exportBtn" type="button">画像で保存</button>
+    <button class="txtbtn" id="distBtn" type="button" hidden>全班に配る</button>
+    <button class="txtbtn" id="presentBtn" type="button" hidden>みんなに見せる</button>
     <button class="txtbtn primary" id="submitBtn" type="button" hidden>先生に提出</button>
   </footer>
 </div>
@@ -461,9 +504,31 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
     <div class="joinrow"><input class="namein" id="rmLink" type="text" readonly aria-label="ルームのリンク"><button class="txtbtn" id="rmCopy" type="button">コピー</button></div>
     <div class="row" style="margin-top:16px">
       <button class="txtbtn danger" id="rmDelete" type="button" hidden>このルームを消す</button>
+      <button class="txtbtn" id="rmSwitch" type="button">別の人として入る</button>
       <button class="txtbtn" id="rmLeave" type="button">ルームを出る</button>
       <button class="txtbtn primary" id="rmClose" type="button">閉じる</button>
     </div>
+  </div>
+</div>
+
+<!-- distribute -->
+<div class="modal" id="dModal" hidden>
+  <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="dTitle">
+    <h2 id="dTitle">全班に配る</h2>
+    <p class="sub">いま開いているフレームを、選んだ班のボードに新しいフレームとして配ります。配ったあとは、それぞれの班で自由に書きこめます。</p>
+    <div class="dlist" id="dList"></div>
+    <div class="row between" style="margin-top:12px">
+      <button class="txtbtn" id="dAll" type="button">すべて選ぶ</button>
+      <div class="row"><button class="txtbtn" id="dCancel" type="button">やめる</button><button class="txtbtn primary" id="dGo" type="button">配る</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- teacher's screen for everyone -->
+<div class="modal present" id="pModal" hidden>
+  <div class="pbox" role="dialog" aria-modal="true" aria-labelledby="pTitle">
+    <div class="phead"><b id="pTitle">先生の画面</b><span id="pSub" class="psub"></span><span class="grow"></span><button class="txtbtn" id="pClose" type="button">自分のボードにもどる</button></div>
+    <div class="pstage" id="pStage"><div class="pwrap" id="pWrap"><canvas id="pCanvas" width="1600" height="900"></canvas><canvas id="pLaser" width="1600" height="900"></canvas></div></div>
   </div>
 </div>
 

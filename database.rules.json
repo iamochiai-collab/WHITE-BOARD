@@ -34,8 +34,19 @@
         },
         "groups": {
           "$g": {
-            ".read": "auth != null && ((auth != null && root.child('rooms/' + $r + '/secret/teacherCode').exists() && root.child('rooms/' + $r + '/teachers/' + auth.uid).val() == root.child('rooms/' + $r + '/secret/teacherCode').val()) || root.child('rooms/' + $r + '/users/' + auth.uid + '/group').val() == $g || (root.child('rooms/' + $r + '/users/' + auth.uid).exists() && root.child('rooms/' + $r + '/meta/share').val() == true))",
-            ".write": "auth != null && root.child('rooms/' + $r + '/users/' + auth.uid + '/group').val() == $g"
+            ".read": "auth != null && ((auth != null && root.child('rooms/' + $r + '/secret/teacherCode').exists() && root.child('rooms/' + $r + '/teachers/' + auth.uid).val() == root.child('rooms/' + $r + '/secret/teacherCode').val()) || root.child('rooms/' + $r + '/users/' + auth.uid + '/group').val() == $g || (root.child('rooms/' + $r + '/users/' + auth.uid).exists() && root.child('rooms/' + $r + '/meta/share').val() == true) || (root.child('rooms/' + $r + '/users/' + auth.uid).exists() && (root.child('rooms/' + $r + '/meta/present/on').val() == true && root.child('rooms/' + $r + '/meta/present/g').val() == $g)))",
+            "frames": {
+              "$f": {
+                ".write": "auth != null && root.child('rooms/' + $r + '/users/' + auth.uid + '/group').val() == $g && newData.exists()"
+              }
+            },
+            "items": {
+              "$f": {
+                "$i": {
+                  ".write": "auth != null && root.child('rooms/' + $r + '/users/' + auth.uid + '/group').val() == $g"
+                }
+              }
+            }
           }
         },
         "presence": {
