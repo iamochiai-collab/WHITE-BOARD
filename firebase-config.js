@@ -1,12 +1,12 @@
 // Firebase の設定
-// README の「手順2」で Firebase コンソールからコピーした値に、下の YOUR_... を置き換えてください。
 // （この値はウェブに公開されても大丈夫な種類のものです。データの守りは database.rules.json のルールで行います）
 export const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyBq1LvS9xkx_TxuEqrhlwItf0Je6jUq3pE",
+  authDomain: "white-board-ca0c1.firebaseapp.com",
+  // Realtime Database の「データ」タブの上に出ているアドレスと同じにしてください
+  databaseURL: "https://white-board-ca0c1-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "white-board-ca0c1",
+  storageBucket: "white-board-ca0c1.firebasestorage.app",
+  messagingSenderId: "1030102626255",
+  appId: "1:1030102626255:web:0d12f1c27c5640838becba"
 };
