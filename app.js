@@ -1295,6 +1295,7 @@ function bindUI() {
   $('nameIn').addEventListener('input', checkWelcome);
   $('nameIn').addEventListener('keydown', e => { if (e.key === 'Enter') startWelcome(); });
   $('wStart').onclick = startWelcome;
+  $('wTeacher').onclick = () => { $('wModal').hidden = true; openTeacher(); };
   $('tBtn').onclick = openTeacher;
   $('tClose').onclick = closeTeacher;
   $('tGo').onclick = teacherGo;
