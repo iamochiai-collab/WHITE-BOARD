@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>ふせんボード</title>
 <meta name="description" content="班ごとに書きこめて、先生に提出できるホワイトボード">
 <link rel="icon" href="favicon.ico" sizes="any">
@@ -318,6 +318,8 @@ button{cursor:pointer}
 @media (prefers-reduced-motion:reduce){.cursor{transition:none}.toast{transition:none}}
 
 [hidden]{display:none!important}
+html,body,button,select,input,textarea,a,.modal,.dialog{touch-action:manipulation}
+.board,.stage{-webkit-touch-callout:none}
 img{max-width:100%}
 :root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 .avatars span{display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700}
