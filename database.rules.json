@@ -23,7 +23,7 @@
       "$uid": {
         ".read": "auth != null && auth.uid == $uid",
         ".write": "auth != null && ((auth != null && root.child('secret/teacherCode').exists() && root.child('teachers/' + auth.uid).val() == root.child('secret/teacherCode').val()) || (auth.uid == $uid && (!data.exists() || root.child('meta/groups/lock').val() != true || newData.child('group').val() == data.child('group').val())))",
-        ".validate": "newData.hasChildren(['name', 'group']) && newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('group').isString() && newData.child('group').val().matches(/^g[0-9]{1,2}$/)"
+        ".validate": "newData.hasChildren(['name', 'group']) && newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('group').isString() && newData.child('group').val().matches(/^g[0-9][0-9]?$/)"
       }
     },
     "groups": {
