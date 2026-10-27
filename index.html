@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ふせんボード</title>
 <meta name="description" content="班ごとに書きこめて、先生に提出できるホワイトボード">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="ふせんボード">
+<meta name="theme-color" content="#FFE9A0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Zen+Maru+Gothic:wght@700&display=swap">
@@ -65,7 +71,7 @@ button{cursor:pointer}
 
 /* ---------- top bar ---------- */
 .top{grid-area:top;display:flex;align-items:center;gap:10px;min-width:0}
-.mark{flex:none;width:34px;height:34px}
+.mark{flex:none;width:34px;height:34px;border-radius:8px}
 .grp{
   flex:none;display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:10px;
   border:1px solid var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700;font-size:15px;white-space:nowrap
@@ -328,11 +334,7 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
 <body>
 <div id="app">
   <header class="top">
-    <svg class="mark" viewBox="0 0 34 34" aria-hidden="true">
-      <rect x="4" y="6" width="22" height="22" rx="2" fill="#FFE97A" transform="rotate(-6 15 17)"/>
-      <rect x="9" y="4" width="21" height="21" rx="2" fill="#B5DEFF" transform="rotate(5 19 14)"/>
-      <path d="M13 15c2.5-2 5-2 7.5 0s5 2 6 0" stroke="#2C4FC6" stroke-width="2" fill="none" stroke-linecap="round"/>
-    </svg>
+    <img class="mark" src="icons/icon-192.png" alt="" width="34" height="34">
     <button class="grp" id="grpBtn" type="button" title="班を選ぶ"><span id="grpName">班を選ぶ</span><svg viewBox="0 0 14 14"><path d="M3 5l4 4 4-4"/></svg></button>
     <input id="title" class="title" type="text" maxlength="60" placeholder="無題のボード" aria-label="ボードの名前" readonly>
     <div class="grow"></div>
