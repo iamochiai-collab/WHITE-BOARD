@@ -303,7 +303,7 @@ function createEl(id, it) {
   let el;
   if (it.type === 'ink') {
     el = document.createElementNS(SVGNS, 'svg');
-    el.setAttribute('class', 'item ink' + ((it.a || 1) < 1 ? ' mark' : ''));
+    el.setAttribute('class', 'item ink' + ((it.a || 1) < 1 ? ' hl' : ''));
     const vis = document.createElementNS(SVGNS, 'path');
     vis.setAttribute('fill', 'none'); vis.setAttribute('stroke-linecap', 'round'); vis.setAttribute('stroke-linejoin', 'round');
     const hit = document.createElementNS(SVGNS, 'path');
@@ -385,7 +385,7 @@ function renderItems() {
   list.forEach(([id, it], i) => {
     seen.add(id);
     let el = els.get(id);
-    if (el && (el._type !== it.type || (it.type === 'ink' && el.classList.contains('mark') !== ((it.a || 1) < 1)))) { el.remove(); el = null; }
+    if (el && (el._type !== it.type || (it.type === 'ink' && el.classList.contains('hl') !== ((it.a || 1) < 1)))) { el.remove(); el = null; }
     if (!el) { el = createEl(id, it); els.set(id, el); layer.appendChild(el); }
     updateEl(el, id, it, i + 1);
   });
@@ -508,7 +508,7 @@ board.addEventListener('pointerdown', e => {
     const mk = t === 'marker';
     act = { kind: 'ink', pid: e.pointerId, pts: [r1(p.x), r1(p.y)], color: mk ? state.markColor : state.inkColor, w: mk ? 26 : state.inkW, a: mk ? 0.4 : 1 };
     livePath.setAttribute('stroke', act.color); livePath.setAttribute('stroke-width', act.w);
-    livePath.setAttribute('stroke-opacity', act.a); livePath.style.mixBlendMode = mk ? 'multiply' : '';
+    livePath.setAttribute('stroke-opacity', act.a);
     board.setPointerCapture(e.pointerId); drawLive();
   } else if (t === 'eraser') {
     act = { kind: 'erase', pid: e.pointerId, last: p, gone: [], fk: curFK() };
