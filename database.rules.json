@@ -1,0 +1,53 @@
+{
+  "rules": {
+    "teachers": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid == $uid && auth.token.email_verified == true && !root.child('teachers').exists()",
+        ".validate": "newData.val() == true"
+      }
+    },
+    "meta": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('teachers/' + auth.uid).val() == true"
+    },
+    "users": {
+      ".read": "auth != null && root.child('teachers/' + auth.uid).val() == true",
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && (root.child('teachers/' + auth.uid).val() == true || (auth.uid == $uid && (!data.exists() || root.child('meta/groups/lock').val() != true || newData.child('group').val() == data.child('group').val())))",
+        ".validate": "newData.hasChildren(['name', 'group']) && newData.child('name').isString() && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('group').isString() && newData.child('group').val().matches(/^g[0-9]{1,2}$/)"
+      }
+    },
+    "groups": {
+      "$g": {
+        ".read": "auth != null && (root.child('teachers/' + auth.uid).val() == true || root.child('users/' + auth.uid + '/group').val() == $g)",
+        ".write": "auth != null && (root.child('teachers/' + auth.uid).val() == true || root.child('users/' + auth.uid + '/group').val() == $g)"
+      }
+    },
+    "presence": {
+      "$g": {
+        ".read": "auth != null && (root.child('teachers/' + auth.uid).val() == true || root.child('users/' + auth.uid + '/group').val() == $g)",
+        "$uid": {
+          ".write": "auth != null && auth.uid == $uid && (root.child('teachers/' + auth.uid).val() == true || root.child('users/' + auth.uid + '/group').val() == $g || !newData.exists())"
+        }
+      }
+    },
+    "subIndex": {
+      ".read": "auth != null && root.child('teachers/' + auth.uid).val() == true",
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        "$sid": {
+          ".write": "auth != null && (root.child('teachers/' + auth.uid).val() == true || (auth.uid == $uid && !data.exists()))",
+          ".validate": "root.child('teachers/' + auth.uid).val() == true || !newData.child('rv').exists()"
+        }
+      }
+    },
+    "subData": {
+      "$sid": {
+        ".read": "auth != null && (root.child('teachers/' + auth.uid).val() == true || data.child('uid').val() == auth.uid)",
+        ".write": "auth != null && (root.child('teachers/' + auth.uid).val() == true || (!data.exists() && newData.child('uid').val() == auth.uid))"
+      }
+    }
+  }
+}

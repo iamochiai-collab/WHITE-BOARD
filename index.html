@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ふせんボード</title>
+<meta name="description" content="班ごとに書きこめて、先生に提出できるホワイトボード">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Zen+Maru+Gothic:wght@700&display=swap">
+<style>
+/* Layout: 上にタイトル帯（班・提出箱）、左に道具箱、中央に16:9の紙のボード、下にフレーム帯。スマホでは道具箱が下に回る */
+:root{
+  --bg:#ECEFF3;
+  --panel:#FFFFFF;
+  --fg:#1D2330;
+  --muted:#5D6778;
+  --line:#D3D9E2;
+  --accent:#2C4FC6;
+  --accent-ink:#FFFFFF;
+  --accent-soft:#E2E8FB;
+  --danger:#B8392A;
+  --ok:#1F8A4C;
+  --ok-soft:#DDF3E5;
+  --shadow:0 1px 2px rgba(22,32,52,.08),0 6px 22px rgba(22,32,52,.10);
+  --f-ui:"BIZ UDPGothic","Hiragino Sans","Yu Gothic UI","Yu Gothic",system-ui,sans-serif;
+  --f-ud:"UD デジタル 教科書体 N-R","UD Digi Kyokasho N-R","UDDigiKyokashoN-R","BIZ UDPGothic","Hiragino Sans",sans-serif;
+  --f-display:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#13161C;--panel:#1D2129;--fg:#E7EBF2;--muted:#9AA4B6;--line:#313847;
+    --accent:#8AA4FF;--accent-ink:#0D1224;--accent-soft:#25304F;--danger:#FF8C78;
+    --ok:#6FD39A;--ok-soft:#1E3A2A;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.45);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#13161C;--panel:#1D2129;--fg:#E7EBF2;--muted:#9AA4B6;--line:#313847;
+  --accent:#8AA4FF;--accent-ink:#0D1224;--accent-soft:#25304F;--danger:#FF8C78;
+  --ok:#6FD39A;--ok-soft:#1E3A2A;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.45);
+  color-scheme:dark;
+}
+html{height:100%;box-sizing:border-box}
+*,*::before,*::after{box-sizing:border-box}
+body{
+  height:100%;margin:0;overflow:hidden;
+  background:var(--bg);color:var(--fg);font-family:var(--f-ui);font-size:14px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;
+}
+button,select,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+#app{
+  height:100%;display:grid;gap:10px;padding-block:10px;
+  grid-template-columns:auto minmax(0,1fr);
+  grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-areas:"top top" "tools stage" "frames frames";
+}
+
+/* ---------- top bar ---------- */
+.top{grid-area:top;display:flex;align-items:center;gap:10px;min-width:0}
+.mark{flex:none;width:34px;height:34px}
+.grp{
+  flex:none;display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:10px;
+  border:1px solid var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700;font-size:15px;white-space:nowrap
+}
+.grp svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.title{
+  flex:1 1 auto;min-width:0;max-width:460px;
+  font-family:var(--f-display);font-weight:700;font-size:20px;letter-spacing:.02em;
+  background:transparent;border:1px solid transparent;border-radius:8px;padding:5px 8px;
+}
+.title:not([readonly]):hover{border-color:var(--line)}
+.title:not([readonly]):focus{border-color:var(--accent);outline:none;background:var(--panel)}
+.title::placeholder{color:var(--muted)}
+.top .grow{flex:1}
+.people{display:flex;align-items:center;gap:8px;min-width:0}
+.avatars{display:flex}
+.avatars img,.avatars span{width:28px;height:28px;border-radius:50%;border:2px solid var(--bg);margin-left:-8px;background:var(--panel);display:block}
+.avatars>:first-child{margin-left:0}
+.avatars .me{border-color:var(--accent)}
+.people .count{color:var(--muted);font-size:12px;white-space:nowrap}
+.pill{
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+  font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 10px;background:var(--panel)
+}
+.pill i{width:8px;height:8px;border-radius:50%;background:#2E9E5B}
+.pill[data-s="saving"] i{background:#E0A100}
+.pill[data-s="error"] i{background:var(--danger)}
+.pill[data-s="local"] i,.pill[data-s="readonly"] i,.pill[data-s="connecting"] i{background:var(--muted)}
+.iconbtn{
+  display:inline-grid;place-items:center;width:38px;height:38px;border-radius:10px;flex:none;
+  background:var(--panel);border:1px solid var(--line)
+}
+.iconbtn:disabled{opacity:.4;cursor:default}
+.iconbtn svg,.tool svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.badge{
+  display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;
+  background:var(--danger);color:#fff;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums
+}
+
+/* ---------- tools ---------- */
+.tools{
+  grid-area:tools;display:flex;flex-direction:column;align-items:center;gap:4px;
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px 6px;
+  overflow:auto;min-height:0;
+}
+.tool{
+  width:56px;flex:none;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:7px 0 6px;border:0;border-radius:11px;background:transparent;color:var(--fg)
+}
+.tool span{font-size:10.5px;letter-spacing:.04em;color:var(--muted)}
+.tool:hover{background:var(--bg)}
+.tool[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
+.tool[aria-pressed="true"] span{color:var(--accent);font-weight:700}
+.tool:disabled{opacity:.35;cursor:default;background:transparent}
+.sep{flex:none;width:36px;height:1px;background:var(--line);margin:4px 0}
+.opts{display:flex;flex-direction:column;align-items:center;gap:6px}
+.sw{
+  width:28px;height:28px;flex:none;border-radius:50%;border:2px solid var(--panel);
+  box-shadow:0 0 0 1px var(--line);padding:0
+}
+.sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--accent)}
+.sw.note{border-radius:5px}
+.wd{
+  width:28px;height:28px;flex:none;border-radius:8px;border:1px solid transparent;background:transparent;
+  display:grid;place-items:center
+}
+.wd b{display:block;border-radius:50%;background:var(--fg)}
+.wd[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+
+/* ---------- stage & board ---------- */
+.stage{
+  grid-area:stage;position:relative;min-width:0;min-height:0;
+  display:grid;place-items:center;overflow:hidden;touch-action:none
+}
+.wrap{position:relative;border-radius:6px;box-shadow:var(--shadow);overflow:hidden;background:#FCFCF9}
+.board{
+  position:absolute;left:0;top:0;width:1600px;height:900px;transform-origin:0 0;
+  background:#FCFCF9;touch-action:none;user-select:none;-webkit-user-select:none;overflow:hidden
+}
+.board .bgl{position:absolute;inset:0;pointer-events:none}
+#layer,#cursors{position:absolute;inset:0}
+#cursors,#live,#laser{pointer-events:none}
+#live,#laser{position:absolute;left:0;top:0;width:1600px;height:900px}
+.board[data-tool="pen"],.board[data-tool="marker"]{cursor:crosshair}
+.board[data-tool="eraser"]{cursor:cell}
+.board[data-tool="note"],.board[data-tool="text"]{cursor:copy}
+.board[data-tool="laser"]{cursor:none}
+.board.nogroup{pointer-events:none}
+.item{position:absolute;pointer-events:none}
+.board[data-tool="select"] .item{pointer-events:auto;cursor:grab}
+.board[data-tool="select"] .item.ink{pointer-events:none}
+.board[data-tool="select"] .item.ink .hit{pointer-events:stroke;cursor:grab}
+.board.readonly .item{cursor:default!important}
+.note{
+  display:flex;align-items:center;justify-content:center;padding:18px;overflow:hidden;
+  box-shadow:0 1px 2px rgba(0,0,0,.12),0 8px 18px rgba(0,0,0,.10);
+  font-family:var(--f-ud);font-weight:400;color:#262626;line-height:1.35;text-align:center
+}
+.note .txt{width:100%;max-height:100%;overflow:hidden;white-space:pre-wrap;word-break:break-all;outline:none;font-size:36px}
+.textbox{font-family:var(--f-ud);font-weight:400;line-height:1.4;padding:4px 8px;min-height:1.4em}
+.textbox .txt{white-space:pre-wrap;word-break:break-all;outline:none;min-height:1.4em}
+.item.editing,.item.editing .txt{cursor:text!important;user-select:text;-webkit-user-select:text}
+.textbox.editing{background:rgba(44,79,198,.06)}
+.item.ink{overflow:visible}
+.item.mark{mix-blend-mode:multiply}
+.item.sel{outline:4px solid #2C4FC6;outline-offset:6px}
+.item.remote{outline:4px dashed var(--rc,#888);outline-offset:6px}
+.handle{
+  position:absolute;right:-16px;bottom:-16px;width:30px;height:30px;border-radius:50%;
+  background:#2C4FC6;border:4px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:nwse-resize;pointer-events:auto
+}
+.note .handle{right:4px;bottom:4px}
+.textbox .handle{cursor:ew-resize;bottom:auto;top:50%;margin-top:-15px}
+.hint{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;text-align:center}
+.hint p{margin:0;font-family:var(--f-ud);font-weight:400;font-size:40px;color:#7B8494}
+.hint small{display:block;margin-top:14px;font-family:var(--f-ui);font-size:22px;color:#98A0AE}
+.cursor{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;transition:transform .06s linear}
+.cursor svg{display:block;width:22px;height:22px}
+.cursor b{
+  position:absolute;left:16px;top:18px;white-space:nowrap;font:700 12px/1 var(--f-ui);color:#fff;
+  padding:4px 7px;border-radius:6px
+}
+.cursor.laser svg{display:none}
+.cursor.laser b{left:14px;top:10px}
+
+/* context bar */
+.ctx{
+  position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:5;
+  display:flex;align-items:center;gap:6px;max-width:calc(100% - 16px);overflow-x:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 8px;box-shadow:var(--shadow)
+}
+.ctx .lbl{font-size:12px;color:var(--muted);padding:0 4px;white-space:nowrap}
+.ctx .vs{width:1px;align-self:stretch;background:var(--line);margin:0 2px}
+.txtbtn{
+  flex:none;white-space:nowrap;border:1px solid var(--line);background:var(--panel);border-radius:9px;
+  padding:7px 11px;font-size:13px;display:inline-flex;align-items:center;gap:6px
+}
+.txtbtn:hover{background:var(--bg)}
+.txtbtn.danger{color:var(--danger)}
+.txtbtn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.txtbtn.primary:hover{filter:brightness(1.05)}
+.txtbtn:disabled{opacity:.4;cursor:default}
+
+/* ---------- frames bar ---------- */
+.frames{
+  grid-area:frames;display:flex;align-items:center;gap:8px;overflow-x:auto;min-width:0;padding-bottom:2px
+}
+.frames .lab{font-size:12px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.chips{display:flex;gap:6px}
+.chip{
+  flex:none;min-width:38px;height:30px;border-radius:8px;border:1px solid var(--line);background:var(--panel);
+  font-variant-numeric:tabular-nums;font-weight:700;font-size:13px;padding:0 8px;position:relative
+}
+.chip[aria-current="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.chip .dot{position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;border:2px solid var(--bg)}
+.frames .spacer{flex:1 0 8px}
+.frames select{height:34px;border-radius:9px;border:1px solid var(--line);background:var(--panel);padding:0 8px;font-size:13px}
+.smallbtn{width:34px;height:34px}
+
+/* ---------- dialogs ---------- */
+.modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(10,14,22,.5);padding:16px}
+.dialog{
+  width:min(400px,100%);max-height:calc(100% - 8px);overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow)
+}
+.dialog.wide{width:min(640px,100%)}
+.dialog.xwide{width:min(900px,100%)}
+.dialog h2{margin:0 0 6px;font-family:var(--f-display);font-size:20px;text-wrap:balance}
+.dialog .sub{margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.7}
+.dialog p{margin:0 0 18px;line-height:1.7;font-size:15px}
+.dialog .row{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.dialog .row.between{justify-content:space-between;align-items:center}
+.glist{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;margin-bottom:16px}
+.gbtn{
+  height:64px;border-radius:12px;border:1px solid var(--line);background:var(--bg);
+  font-family:var(--f-display);font-weight:700;font-size:18px;padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.gbtn[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.gbtn:disabled{opacity:.45;cursor:default}
+.settings{border-top:1px solid var(--line);padding-top:16px;margin-top:4px;display:grid;gap:12px}
+.settings h3{margin:0;font-size:14px}
+.field{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.field label{font-size:13px;color:var(--muted)}
+.field select,.names input,.cmt{
+  border:1px solid var(--line);border-radius:9px;background:var(--bg);padding:7px 9px;min-width:0
+}
+.names{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px}
+.chk{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.6}
+.chk input{margin-top:4px}
+.note-txt{font-size:12px;color:var(--muted);line-height:1.7;margin:0}
+.lockmsg{background:var(--bg);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.7;margin:0 0 14px}
+
+/* inbox */
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.filters select{height:34px;border:1px solid var(--line);border-radius:9px;background:var(--bg);padding:0 8px}
+.subs{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.subrow{
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;align-items:center;text-align:left;
+  padding:10px 12px;border:0;border-top:1px solid var(--line);background:var(--panel)
+}
+.subrow:first-child{border-top:0}
+.subrow:hover{background:var(--bg)}
+.subrow .g{font-weight:700;color:var(--accent);white-space:nowrap}
+.subrow .who{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.subrow .meta{grid-column:2;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.subrow .st{grid-row:1/span 2;grid-column:3}
+.subrow .c{grid-column:2/span 2;font-size:12px;color:var(--fg);background:var(--bg);border-radius:8px;padding:6px 8px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.tag{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap;border:1px solid var(--line);color:var(--muted)}
+.tag.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.empty{padding:28px 12px;text-align:center;color:var(--muted);line-height:1.8}
+.viewer img{display:block;width:100%;height:auto;border-radius:8px;border:1px solid var(--line);background:#FCFCF9}
+.viewer .info{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:12px 0;color:var(--muted);font-size:13px}
+.viewer .info b{color:var(--fg)}
+.review{display:grid;gap:8px;margin-bottom:14px}
+.cmt{width:100%;min-height:64px;resize:vertical;line-height:1.6}
+.fromt{background:var(--ok-soft);border-radius:10px;padding:10px 12px;line-height:1.7;margin:0 0 14px;white-space:pre-wrap;word-break:break-all}
+.fromt b{display:block;font-size:12px;color:var(--ok)}
+
+.toast{
+  position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:60;
+  background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:13px;
+  opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap
+}
+.toast.on{opacity:1}
+
+@media (max-width:720px){
+  #app{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr) auto auto;
+    grid-template-areas:"top" "stage" "tools" "frames";
+    gap:8px;padding-block:8px;
+  }
+  .tools{flex-direction:row;padding:6px;border-radius:14px}
+  .tool{width:52px}
+  .sep{width:1px;height:36px;margin:0 4px}
+  .opts{flex-direction:row}
+  .title{font-size:16px;order:9;flex:1 1 100%;max-width:none}
+  .top{flex-wrap:wrap;row-gap:6px}
+  .top .grow{display:none}
+  .people{margin-left:auto}
+  .mark{display:none}
+  .people .count,.pill span,.top .hidesm{display:none}
+}
+@media (prefers-reduced-motion:reduce){.cursor{transition:none}.toast{transition:none}}
+
+[hidden]{display:none!important}
+img{max-width:100%}
+:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.avatars span{display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700}
+.txtbtn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.txtbtn.ghost:hover{background:var(--panel);border-color:var(--line)}
+a.txtbtn{text-decoration:none;color:var(--fg)}
+.flabel{display:block;font-size:13px;color:var(--muted);margin:0 0 6px}
+.namein{width:100%;height:46px;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:0 12px;font-size:18px;margin-bottom:16px;font-family:var(--f-ud)}
+.namein:focus{outline:none;border-color:var(--accent)}
+.setup ol{padding-left:1.4em;line-height:1.9;margin:0 0 12px}
+.setup code{font-size:12px;background:var(--bg);border-radius:5px;padding:1px 5px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <svg class="mark" viewBox="0 0 34 34" aria-hidden="true">
+      <rect x="4" y="6" width="22" height="22" rx="2" fill="#FFE97A" transform="rotate(-6 15 17)"/>
+      <rect x="9" y="4" width="21" height="21" rx="2" fill="#B5DEFF" transform="rotate(5 19 14)"/>
+      <path d="M13 15c2.5-2 5-2 7.5 0s5 2 6 0" stroke="#2C4FC6" stroke-width="2" fill="none" stroke-linecap="round"/>
+    </svg>
+    <button class="grp" id="grpBtn" type="button" title="班を選ぶ"><span id="grpName">班を選ぶ</span><svg viewBox="0 0 14 14"><path d="M3 5l4 4 4-4"/></svg></button>
+    <input id="title" class="title" type="text" maxlength="60" placeholder="無題のボード" aria-label="ボードの名前" readonly>
+    <div class="grow"></div>
+    <div class="people" id="people" hidden><div class="avatars" id="avatars"></div><span class="count" id="pcount"></span></div>
+    <span class="pill" id="status" data-s="connecting"><i></i><span id="statusText">接続中…</span></span>
+    <button class="txtbtn" id="inboxBtn" type="button" hidden>提出箱 <span class="badge" id="inboxBadge" hidden>0</span></button>
+    <button class="txtbtn" id="mineBtn" type="button" hidden>提出した物 <span class="badge" id="mineBadge" hidden>0</span></button>
+    <button class="txtbtn ghost" id="tBtn" type="button">先生</button>
+    <button class="iconbtn" id="undoBtn" type="button" title="元に戻す (Ctrl+Z)" aria-label="元に戻す" disabled>
+      <svg viewBox="0 0 24 24"><path d="M9 6 4 11l5 5M4 11h10a5 5 0 0 1 0 10h-3"/></svg>
+    </button>
+  </header>
+
+  <nav class="tools" id="tools" aria-label="道具">
+    <button class="tool" data-tool="select" type="button" title="選択・移動 (V)"><svg viewBox="0 0 24 24"><path d="M6 3l13 8-6 1.6L10 19z"/></svg><span>選択</span></button>
+    <button class="tool" data-tool="pen" type="button" title="ペン (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1.2-4.2L16 5l3 3L8.2 18.8z M14 7l3 3"/></svg><span>ペン</span></button>
+    <button class="tool" data-tool="marker" type="button" title="マーカー (M)"><svg viewBox="0 0 24 24"><path d="M4 21h8M7 16l9-11 4 3.3-9 11H7z M7 16l-1 3"/></svg><span>マーカー</span></button>
+    <button class="tool" data-tool="eraser" type="button" title="消しゴム (E)"><svg viewBox="0 0 24 24"><path d="M9 20h11M4.5 14.5l9-9 6 6-8.5 8.5H9z M8.5 10.5l6 6"/></svg><span>消しゴム</span></button>
+    <button class="tool" data-tool="note" type="button" title="付箋 (N)"><svg viewBox="0 0 24 24"><path d="M4 4h16v10l-6 6H4z M14 20v-6h6"/></svg><span>付箋</span></button>
+    <button class="tool" data-tool="text" type="button" title="テキスト (T)"><svg viewBox="0 0 24 24"><path d="M5 7V4h14v3 M12 4v16 M9 20h6"/></svg><span>文字</span></button>
+    <button class="tool" data-tool="laser" type="button" title="レーザー (L)"><svg viewBox="0 0 24 24"><circle cx="7" cy="17" r="3"/><path d="M9.5 14.5 20 4M14 4h6v6"/></svg><span>レーザー</span></button>
+    <div class="sep" id="optsSep"></div>
+    <div class="opts" id="opts"></div>
+  </nav>
+
+  <main class="stage" id="stage">
+    <div class="ctx" id="ctx" hidden></div>
+    <div class="wrap" id="wrap">
+      <div class="board nogroup" id="board" data-tool="pen">
+        <div class="bgl" id="bgl"></div>
+        <div class="hint" id="hint"><div><p id="hintMain">読み込み中…</p><small id="hintSub"></small></div></div>
+        <div id="layer"></div>
+        <svg id="live" viewBox="0 0 1600 900"><path id="livePath" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <canvas id="laser" width="1600" height="900"></canvas>
+        <div id="cursors"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="frames" aria-label="フレーム">
+    <button class="iconbtn smallbtn" id="prevF" type="button" aria-label="前のフレーム" title="前のフレーム"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <span class="lab" id="flab">フレーム 1 / 1</span>
+    <button class="iconbtn smallbtn" id="nextF" type="button" aria-label="次のフレーム" title="次のフレーム"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+    <div class="chips" id="chips"></div>
+    <button class="txtbtn" id="addF" type="button">＋ フレーム</button>
+    <div class="spacer"></div>
+    <select id="bgSel" aria-label="背景"></select>
+    <button class="txtbtn" id="clearF" type="button">全消去</button>
+    <button class="txtbtn danger" id="delF" type="button">フレーム削除</button>
+    <button class="txtbtn" id="exportBtn" type="button">画像で保存</button>
+    <button class="txtbtn primary" id="submitBtn" type="button" hidden>先生に提出</button>
+  </footer>
+</div>
+
+<!-- confirm -->
+<div class="modal" id="modal" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="modalMsg">
+    <p id="modalMsg"></p>
+    <div class="row">
+      <button class="txtbtn" id="modalCancel" type="button">やめる</button>
+      <button class="txtbtn danger" id="modalOk" type="button">消す</button>
+    </div>
+  </div>
+</div>
+
+<!-- setup notice -->
+<div class="modal" id="setupModal" hidden>
+  <div class="dialog wide setup" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+    <h2 id="setupTitle">Firebase の設定がまだです</h2>
+    <p class="sub">みんなで書き込んだり提出したりするには、保存先の Firebase をつなぐ必要があります。手順は README にあります。</p>
+    <ol>
+      <li>Firebase でプロジェクトを作る</li>
+      <li><code>firebase-config.js</code> に設定を貼りつける</li>
+      <li>ルール（<code>database.rules.json</code>）を貼りつける</li>
+    </ol>
+    <p class="note-txt">設定の前でも、この端末の中だけで動きを試せます。お試しモードでは、先生と生徒の両方の機能が使えます。</p>
+    <div class="row" style="margin-top:14px">
+      <a class="txtbtn" href="https://github.com/iamochiai-collab/WHITE-BOARD#readme" target="_blank" rel="noopener">手順を見る</a>
+      <button class="txtbtn primary" id="tryLocal" type="button">お試しモードで開く</button>
+    </div>
+  </div>
+</div>
+
+<!-- welcome (name + group) -->
+<div class="modal" id="wModal" hidden>
+  <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="wTitle">
+    <h2 id="wTitle">はじめに</h2>
+    <p class="sub">名前と班を入れてください。名前は、同じ班の人と先生に表示されます。</p>
+    <label class="flabel" for="nameIn">名前</label>
+    <input class="namein" id="nameIn" type="text" maxlength="20" autocomplete="off" placeholder="例：やまだ はなこ">
+    <div class="flabel">班</div>
+    <div class="glist" id="wList"></div>
+    <p class="lockmsg" id="wErr" hidden></p>
+    <div class="row"><button class="txtbtn primary" id="wStart" type="button" disabled>はじめる</button></div>
+  </div>
+</div>
+
+<!-- group picker -->
+<div class="modal" id="gModal" hidden>
+  <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="gTitle">
+    <h2 id="gTitle">班を選んでください</h2>
+    <p class="sub" id="gSub"></p>
+    <p class="lockmsg" id="gLock" hidden>班の変更は先生が止めています。変えたいときは先生に伝えてください。</p>
+    <div class="glist" id="gList"></div>
+    <div class="settings" id="gSettings" hidden>
+      <h3>班の設定（先生だけに表示）</h3>
+      <div class="field"><label for="gCount">班の数</label><select id="gCount"></select></div>
+      <div class="names" id="gNames"></div>
+      <label class="chk"><input type="checkbox" id="gLockChk"><span>一度選んだら、生徒が自分で班を変えられないようにする</span></label>
+      <p class="note-txt">班ごとにリンクを配ることもできます。リンクの最後に「#g1」「#g2」…を付けると、その班が最初から選ばれた状態で開きます。</p>
+      <div class="row"><button class="txtbtn primary" id="gSave" type="button">設定を保存</button></div>
+    </div>
+    <div class="row" style="margin-top:14px"><button class="txtbtn" id="gCloseBtn" type="button">閉じる</button></div>
+  </div>
+</div>
+
+<!-- teacher login -->
+<div class="modal" id="tModal" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="tTitle">
+    <h2 id="tTitle">先生ログイン</h2>
+    <p class="sub" id="tMsg">先生は Google アカウントでログインします。ログインすると、すべての班のボードと提出箱が使えるようになります。</p>
+    <div class="row">
+      <button class="txtbtn" id="tClose" type="button">閉じる</button>
+      <button class="txtbtn danger" id="tLogout" type="button" hidden>ログアウト</button>
+      <button class="txtbtn primary" id="tClaim" type="button" hidden>このボードの先生として登録する</button>
+      <button class="txtbtn primary" id="tGoogle" type="button">Google でログイン</button>
+    </div>
+  </div>
+</div>
+
+<!-- submissions list -->
+<div class="modal" id="sModal" hidden>
+  <div class="dialog xwide" role="dialog" aria-modal="true" aria-labelledby="sTitle">
+    <div class="row between" style="margin-bottom:6px"><h2 id="sTitle" style="margin:0">提出箱</h2><button class="txtbtn" id="sClose" type="button">閉じる</button></div>
+    <p class="sub" id="sSub"></p>
+    <div class="filters" id="sFilters">
+      <select id="fGroup" aria-label="班でしぼりこむ"></select>
+      <select id="fState" aria-label="確認状況でしぼりこむ"><option value="all">すべて</option><option value="new">未確認だけ</option><option value="ok">確認済みだけ</option></select>
+    </div>
+    <div class="subs" id="sList"></div>
+  </div>
+</div>
+
+<!-- submission viewer -->
+<div class="modal" id="vModal" hidden>
+  <div class="dialog xwide viewer" role="dialog" aria-modal="true" aria-labelledby="vTitle">
+    <div class="row between" style="margin-bottom:10px"><h2 id="vTitle" style="margin:0">提出物</h2><button class="txtbtn" id="vClose" type="button">閉じる</button></div>
+    <img id="vImg" alt="提出されたフレーム">
+    <div class="info" id="vInfo"></div>
+    <div class="review" id="vReview" hidden>
+      <label class="chk"><input type="checkbox" id="vOk"><span>確認済みにする</span></label>
+      <textarea class="cmt" id="vCmt" maxlength="400" placeholder="生徒へのひとこと（任意）"></textarea>
+    </div>
+    <div id="vFrom"></div>
+    <div class="row">
+      <button class="txtbtn" id="vSave" type="button">画像で保存</button>
+      <button class="txtbtn primary" id="vReviewSave" type="button" hidden>返事を保存</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
