@@ -28,9 +28,9 @@ const state = {
   tool: 'pen', inkColor: '#22242A', inkW: 6, markColor: '#FFD60A', noteColor: '#FFE97A', textColor: '#22242A',
   group: null, groups: defaultGroups(6), lock: false, myGroup: null, myName: '',
   frames: [], frameId: null, items: new Map(), local: new Map(), sel: null, editing: null,
-  teacher: false, scale: 1, title: '', share: false
+  teacher: false, scale: 1, title: '', share: false, room: null, roomName: ''
 };
-let S = null;            // store (Firebase or local)
+let S = null, baseS = null;   // S: いまのルームの中を読み書きする / baseS: 全体
 let uid = null, isLocal = false, authApi = null;
 let pendingTeacherOpen = location.hash === '#teacher';
 let peers = [];
@@ -141,6 +141,18 @@ function makeLocalStore() {
   };
 }
 
+function roomStore(base) {
+  const P = p => p.startsWith('.info') ? p : 'rooms/' + state.room + '/' + p;
+  return {
+    write: (p, o, d) => base.write(P(p), o, d),
+    get: p => base.get(P(p)),
+    onValue: (p, cb, e) => base.onValue(P(p), cb, e),
+    onChildren: (p, h, e) => base.onChildren(P(p), h, e),
+    onDisconnectRemove: p => base.onDisconnectRemove(P(p)),
+    connected: base.connected
+  };
+}
+
 /* ================= status, toast, confirm ================= */
 let inflight = 0, hadError = false, online = false, started = false;
 function setStatus() {
@@ -235,7 +247,7 @@ function layout() {
 function setTool(t) {
   if (state.editing) stopEdit();
   state.tool = t; board.dataset.tool = t;
-  document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tool === t)));
+  document.querySelectorAll('.tool[data-tool]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tool === t)));
   if (t !== 'select') select(null);
   if (t !== 'laser') presence({ l: 0 });
   renderOpts();
@@ -298,6 +310,11 @@ function createEl(id, it) {
     hit.setAttribute('class', 'hit'); hit.setAttribute('fill', 'none'); hit.setAttribute('stroke', 'transparent');
     hit.setAttribute('stroke-linecap', 'round'); hit.setAttribute('stroke-linejoin', 'round');
     el.append(vis, hit); el._vis = vis; el._hit = hit;
+  } else if (it.type === 'image') {
+    el = document.createElement('div');
+    el.className = 'item photo loading';
+    const im = document.createElement('img'); im.alt = ''; im.draggable = false;
+    el.appendChild(im); el._img = im;
   } else {
     el = document.createElement('div');
     el.className = 'item ' + (it.type === 'note' ? 'note' : 'textbox');
@@ -334,6 +351,11 @@ function updateEl(el, id, it0, z) {
     el._vis.setAttribute('stroke', it.color); el._vis.setAttribute('stroke-width', it.w);
     el._vis.setAttribute('stroke-opacity', it.a || 1);
     el._hit.setAttribute('stroke-width', (it.w || 4) + 18);
+  } else if (it.type === 'image') {
+    el.style.left = it.x + 'px'; el.style.top = it.y + 'px'; el.style.width = it.w + 'px'; el.style.height = it.h + 'px';
+    const c = imgCache.get(it.img);
+    if (c && c.el) { if (el._img.getAttribute('src') !== c.el.src) el._img.src = c.el.src; el.classList.remove('loading'); }
+    else { getImg(it.img); el.classList.add('loading'); }
   } else {
     el.style.left = it.x + 'px'; el.style.top = it.y + 'px'; el.style.width = it.w + 'px';
     if (it.type === 'note') { el.style.height = it.h + 'px'; el.style.background = it.color; }
@@ -359,7 +381,7 @@ let renderQueued = false;
 function scheduleRender() { if (renderQueued) return; renderQueued = true; requestAnimationFrame(() => { renderQueued = false; renderItems(); }); }
 function renderItems() {
   const seen = new Set();
-  const list = [...state.items.entries()].filter(([, it]) => it.type === 'note' || it.type === 'text' || (it.type === 'ink' && validInk(it))).sort((a, b) => (a[1].z || 0) - (b[1].z || 0));
+  const list = [...state.items.entries()].filter(([, it]) => it.type === 'note' || it.type === 'text' || (it.type === 'image' && typeof it.img === 'string' && isFinite(it.w) && isFinite(it.h)) || (it.type === 'ink' && validInk(it))).sort((a, b) => (a[1].z || 0) - (b[1].z || 0));
   list.forEach(([id, it], i) => {
     seen.add(id);
     let el = els.get(id);
@@ -388,13 +410,13 @@ function renderCtx() {
   ctxEl._for = key;
   ctxEl.textContent = '';
   const lab = document.createElement('span'); lab.className = 'lbl';
-  lab.textContent = it.type === 'note' ? '付箋' : it.type === 'text' ? '文字' : ((it.a || 1) < 1 ? 'マーカー' : '線');
+  lab.textContent = it.type === 'note' ? '付箋' : it.type === 'text' ? '文字' : it.type === 'image' ? '写真' : ((it.a || 1) < 1 ? 'マーカー' : '線');
   ctxEl.appendChild(lab);
-  const colors = it.type === 'note' ? NOTE_COLORS : (it.type === 'ink' && (it.a || 1) < 1 ? MARK_COLORS : INK_COLORS);
+  const colors = it.type === 'image' ? [] : it.type === 'note' ? NOTE_COLORS : (it.type === 'ink' && (it.a || 1) < 1 ? MARK_COLORS : INK_COLORS);
   colors.forEach(([c, n]) => ctxEl.appendChild(swBtn(c, n, it.type === 'note' ? 'note' : '', it.color === c, () => recolor(id, c))));
   const vs = document.createElement('span'); vs.className = 'vs'; ctxEl.appendChild(vs);
   const btn = (label, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'txtbtn ' + (cls || ''); b.textContent = label; b.onclick = fn; ctxEl.appendChild(b); };
-  if (it.type !== 'ink') btn('編集', () => startEdit(id));
+  if (it.type === 'note' || it.type === 'text') btn('編集', () => startEdit(id));
   btn('前面へ', () => { const fk = curFK(), old = it.z; updItem(fk, id, { z: Date.now() }); pushUndo({ undo: () => updItem(fk, id, { z: old }) }); });
   btn('複製', () => duplicate(id));
   btn('削除', () => deleteItem(id), 'danger');
@@ -423,7 +445,7 @@ function deleteItem(id, opt) {
 const textTimers = new Map();
 function startEdit(id) {
   const el = els.get(id), it = state.items.get(id);
-  if (!el || !it || it.type === 'ink') return;
+  if (!el || !it || (it.type !== 'note' && it.type !== 'text')) return;
   if (state.editing && state.editing !== id) stopEdit();
   state.editing = id; state.sel = id; renderItems();
   const t = el._txt;
@@ -543,9 +565,10 @@ board.addEventListener('pointermove', e => {
     presence({ d: { id: act.id, x: nx, y: ny } });
   } else if (act.kind === 'resize') {
     const it = state.items.get(act.id); if (!it) return;
-    const nw = r1(clamp(act.ow + (p.x - act.sx), it.type === 'note' ? 120 : 80, 1200));
+    const nw = r1(clamp(act.ow + (p.x - act.sx), it.type === 'note' ? 120 : 80, it.type === 'image' ? 1600 : 1200));
     const patch = { w: nw };
     if (it.type === 'note') patch.h = r1(clamp(act.oh + (p.y - act.sy), 120, 800));
+    if (it.type === 'image') patch.h = r1(nw * (act.oh / act.ow));
     state.local.set(act.id, patch); renderOne(act.id);
   } else if (act.kind === 'laser') {
     presence({ l: 1 }); pushTrail(laserTrail, p);
@@ -573,7 +596,7 @@ function endGesture(e) {
       updItem(fk, id, { x: loc.x, y: loc.y, z: Date.now() });
       pushUndo({ undo: () => updItem(fk, id, { x: ox, y: oy }) });
     } else if (!a.moved && a.was) {
-      const it = state.items.get(a.id); if (it && it.type !== 'ink') startEdit(a.id);
+      const it = state.items.get(a.id); if (it && (it.type === 'note' || it.type === 'text')) startEdit(a.id);
     }
   } else if (a.kind === 'resize') {
     const loc = state.local.get(a.id); state.local.delete(a.id);
@@ -669,7 +692,7 @@ function renderGroupBtn() {
 }
 function setHint() {
   if (!state.group) { $('hintMain').textContent = '最初に、名前と班を入れてください'; $('hintSub').textContent = ''; }
-  else { $('hintMain').textContent = 'ペンで書いたり、付箋を貼ったりしてみましょう'; $('hintSub').textContent = gName(state.group) + 'のボードです。書いた内容は自動で保存され、同じ班の人にすぐ届きます'; }
+  else { $('hintMain').textContent = 'ペンで書いたり、付箋や写真を貼ったりしてみましょう'; $('hintSub').textContent = gName(state.group) + 'のボードです。書いた内容は自動で保存され、同じ班の人にすぐ届きます'; }
   hintEl.hidden = state.items.size > 0 && !!state.group;
 }
 function subscribeGroup() {
@@ -850,6 +873,62 @@ function setBg(k) {
   else write(framePath(curFK()), 'update', { order: f.order || 0, bg: k });
 }
 
+/* ================= photos ================= */
+const imgCache = new Map();
+function getImg(id) {
+  let c = imgCache.get(id);
+  if (c) return c.p;
+  c = { el: null };
+  c.p = (async () => {
+    try {
+      const v = await S.get('images/' + id);
+      if (!isObj(v) || typeof v.data !== 'string' || !v.data.startsWith('data:image/')) return null;
+      c.el = await loadImg(v.data); scheduleRender(); return c.el;
+    } catch (e) { return null; }
+  })();
+  imgCache.set(id, c);
+  return c.p;
+}
+async function compressImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImg(url);
+    const limit = isLocal ? 140000 : 300000;
+    let max = 1280, q = 0.78, out = null;
+    for (let i = 0; i < 7; i++) {
+      const sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * sc)), h = Math.max(1, Math.round(img.naturalHeight * sc));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+      out = { data: c.toDataURL('image/jpeg', q), w, h };
+      if (out.data.length <= limit) break;
+      max = Math.round(max * 0.8); q = Math.max(0.5, q - 0.06);
+    }
+    return out;
+  } finally { URL.revokeObjectURL(url); }
+}
+let photoBusy = false;
+async function addPhoto(file) {
+  if (!state.group || !file || photoBusy) return;
+  if (file.type && !/^image\//.test(file.type)) { toast('写真（画像）を選んでください'); return; }
+  photoBusy = true; toast('写真を読みこんでいます…');
+  try {
+    let r;
+    try { r = await compressImage(file); } catch (e) { r = null; }
+    if (!r) { toast('この写真は読みこめませんでした'); return; }
+    const id = rid();
+    const ok = await write('images/' + id, 'set', { data: r.data, by: uid, w: r.w, h: r.h, at: Date.now() });
+    if (!ok) { toast(isLocal ? 'お試しモードでは、写真は少ししか入れられません' : '写真を保存できませんでした'); return; }
+    const c = { el: null }; c.p = loadImg(r.data).then(el => (c.el = el)); imgCache.set(id, c); await c.p;
+    const sc = Math.min(560 / r.w, 420 / r.h);
+    const w = r1(r.w * sc), h = r1(r.h * sc);
+    const jitter = (Math.random() - 0.5) * 60;
+    const iid = addItem({ type: 'image', x: r1((W - w) / 2 + jitter), y: r1((H - h) / 2 + jitter), w, h, img: id });
+    setTool('select'); select(iid);
+    toast('写真を入れました');
+  } finally { photoBusy = false; }
+}
+
 /* ================= drawing a frame to canvas ================= */
 function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; }); }
 function wrapLines(g, text, maxW) {
@@ -886,6 +965,15 @@ async function drawFrame(entries, bg, S2) {
       const lh = s * 1.35; let ty = y + h / 2 - (lines.length - 1) * lh / 2;
       g.beginPath(); g.rect(x, y, w, h); g.clip();
       lines.forEach(l => { g.fillText(l, x + w / 2, ty); ty += lh; });
+    } else if (it.type === 'image' && typeof it.img === 'string') {
+      const w = clamp(+it.w || 200, 10, 1600), h = clamp(+it.h || 150, 10, 900);
+      const im = await getImg(it.img);
+      g.shadowColor = 'rgba(0,0,0,.18)'; g.shadowBlur = 12; g.shadowOffsetY = 4;
+      g.fillStyle = '#E5E7EB'; g.fillRect(x, y, w, h); g.shadowColor = 'transparent';
+      if (im) {
+        const s2 = Math.max(w / im.naturalWidth, h / im.naturalHeight), sw = w / s2, sh = h / s2;
+        g.drawImage(im, (im.naturalWidth - sw) / 2, (im.naturalHeight - sh) / 2, sw, sh, x, y, w, h);
+      }
     } else if (it.type === 'text') {
       const fs = clamp(+it.fs || 36, 8, 200), w = clamp(+it.w || 420, 40, 1600);
       g.font = '400 ' + fs + 'px ' + UDFONT; g.fillStyle = String(it.color || '#222');
@@ -1146,8 +1234,7 @@ function onPeers() {
 /* ================= teacher (合言葉) ================= */
 let tMode = 'enter';
 const T_MSG = {
-  enter: '先生の合言葉を入れると、先生として入れます。先生は何人いても大丈夫です。すべての班のボードと提出箱が使えるようになります。',
-  first: 'まだ合言葉が決まっていません。最初に入る先生が、合言葉を決めてください。ほかの先生には、この合言葉を伝えてください。生徒には教えないでください。',
+  enter: 'このルームの「先生の合言葉」を入れると、先生として入れます。先生は何人いても大丈夫です。すべての班のボードと提出箱が使えるようになります。',
   teacher: '先生として入っています。ほかの先生も、同じ合言葉を入れれば先生になれます。「生徒にもどる」で、この端末をふつうの参加者にもどせます。',
   change: '新しい合言葉を決めます。変えると、ほかの先生は新しい合言葉で入り直すことになります（生徒に知られてしまったときなどに使ってください）。',
   trial: 'お試しモードでは、合言葉なしで先生と生徒を切りかえられます。本番では、先生の合言葉を入れた人だけが先生になれます。'
@@ -1155,11 +1242,11 @@ const T_MSG = {
 function setTMode(m) {
   tMode = m;
   $('tEnter').hidden = m !== 'enter';
-  $('tSetup').hidden = !(m === 'first' || m === 'change');
+  $('tSetup').hidden = m !== 'change';
   $('tStudent').hidden = !(m === 'teacher');
   $('tChange').hidden = !(m === 'teacher') || isLocal;
   $('tGo').hidden = m === 'teacher';
-  $('tGo').textContent = { enter: '先生として入る', first: '合言葉を決めて先生になる', change: '合言葉を変える', trial: '先生として入る' }[m] || '';
+  $('tGo').textContent = { enter: '先生として入る', change: '合言葉を変える', trial: '先生として入る' }[m] || '';
   $('tTitle').textContent = (m === 'teacher' || m === 'change') ? '先生モード' : '先生用';
   $('tMsg').textContent = T_MSG[m];
   $('tErr').hidden = true;
@@ -1168,7 +1255,7 @@ async function openTeacher() {
   ['tCode', 'tNew', 'tNew2'].forEach(k => $(k).value = '');
   if (state.teacher) setTMode('teacher');
   else if (isLocal) setTMode('trial');
-  else { let set = false; try { set = (await S.get('meta/teacherCodeSet')) === true; } catch (e) {} setTMode(set ? 'enter' : 'first'); }
+  else setTMode('enter');
   $('tModal').hidden = false;
   const f = !$('tEnter').hidden ? $('tCode') : (!$('tSetup').hidden ? $('tNew') : null);
   if (f) setTimeout(() => f.focus(), 50);
@@ -1179,7 +1266,7 @@ async function teacherGo() {
   $('tGo').disabled = true;
   try {
     if (tMode === 'trial') {
-      try { localStorage.setItem('wb-trial-role', 'teacher'); } catch (e) {}
+      try { localStorage.setItem('wb-trial-role:' + state.room, 'teacher'); } catch (e) {}
       $('tModal').hidden = true; toast('先生として入りました'); startSession(); return;
     }
     if (tMode === 'enter') {
@@ -1188,31 +1275,26 @@ async function teacherGo() {
       if (!(await tryWrite('teachers/' + uid, 'set', c))) return err('合言葉がちがいます');
       $('tModal').hidden = true; toast('先生として入りました'); startSession(); return;
     }
-    if (tMode === 'first' || tMode === 'change') {
+    if (tMode === 'change') {
       const a = $('tNew').value.trim(), b = $('tNew2').value.trim();
       if (a.length < 6) return err('合言葉は6文字以上にしてください');
       if (a !== b) return err('2つの合言葉が同じではありません');
-      if (!(await tryWrite('secret/teacherCode', 'set', a))) {
-        if (tMode === 'first') { setTMode('enter'); return err('ほかの先生がすでに合言葉を決めています。その合言葉で入ってください'); }
-        return err('合言葉を変えられませんでした');
-      }
+      if (!(await tryWrite('secret/teacherCode', 'set', a))) return err('合言葉を変えられませんでした');
       await tryWrite('teachers/' + uid, 'set', a);
-      await tryWrite('meta/teacherCodeSet', 'set', true);
-      const first = tMode === 'first';
       $('tModal').hidden = true;
-      toast(first ? '合言葉を決めて、先生になりました' : '合言葉を変えました。ほかの先生は入り直してください');
+      toast('合言葉を変えました。ほかの先生は入り直してください');
       startSession();
     }
   } finally { $('tGo').disabled = false; }
 }
 async function backToStudent() {
-  if (isLocal) { try { localStorage.setItem('wb-trial-role', 'student'); } catch (e) {} }
+  if (isLocal) { try { localStorage.setItem('wb-trial-role:' + state.room, 'student'); } catch (e) {} }
   else await tryWrite('teachers/' + uid, 'remove');
   $('tModal').hidden = true; toast('生徒にもどりました'); startSession();
 }
 function closeTeacher() {
   $('tModal').hidden = true;
-  if (!state.group && !state.teacher && started && S) openWelcome(GID.test(location.hash.slice(1)) ? location.hash.slice(1) : null);
+  if (state.room && !state.group && !state.teacher && started && S) openWelcome(GID.test(location.hash.slice(1)) ? location.hash.slice(1) : null);
 }
 
 /* ================= compare groups ================= */
@@ -1352,17 +1434,20 @@ function resetSession() {
   ['inboxBtn', 'mineBtn', 'submitBtn', 'cmpBtn'].forEach(k => $(k).hidden = true);
   closeCompare(); state.share = false;
   ['modal', 'wModal', 'gModal', 'sModal', 'vModal', 'cModal'].forEach(k => $(k).hidden = true);
-  myIndex = []; allSubs = [];
+  myIndex = []; allSubs = []; imgCache.clear();
+  state.title = ''; titleEl.value = '';
   undoStack.length = 0; $('undoBtn').disabled = true;
 }
 async function startSession() {
   resetSession();
   started = true; setStatus();
   // 先生かどうか（合言葉が合っている人だけが secret を読める）
-  if (isLocal) { let r = 'teacher'; try { r = localStorage.getItem('wb-trial-role') || 'teacher'; } catch (e) {} state.teacher = r === 'teacher'; }
+  if (isLocal) { let r = 'teacher'; try { r = localStorage.getItem('wb-trial-role:' + state.room) || 'teacher'; } catch (e) {} state.teacher = r === 'teacher'; }
   else { try { const c = await S.get('secret/teacherCode'); state.teacher = typeof c === 'string' && c.length > 0; } catch (e) { state.teacher = false; } }
   $('tBtn').textContent = state.teacher ? '先生モード' : '先生用はこちら';
   titleEl.readOnly = !state.teacher;
+  titleEl.placeholder = state.roomName || '無題のボード';
+  $('rmDelete').hidden = !state.teacher;
   // ボード名・班の設定
   sessionUnsubs.push(S.onValue('meta/board', v => {
     state.title = isObj(v) && typeof v.title === 'string' ? v.title : '';
@@ -1404,9 +1489,139 @@ async function startSession() {
   if (pendingTeacherOpen) { pendingTeacherOpen = false; if (!state.teacher) openTeacher(); }
 }
 
+/* ================= rooms ================= */
+const normRoom = v => String(v || '').normalize('NFKC').trim().replace(/\s+/g, '').toLowerCase();
+const roomOk = c => c.length >= 3 && c.length <= 20 && !/[.#$\[\]\/]/.test(c);
+function recentRooms() { try { const v = JSON.parse(localStorage.getItem('wb-rooms') || '[]'); return Array.isArray(v) ? v.filter(x => x && typeof x.code === 'string') : []; } catch (e) { return []; } }
+function rememberRoom(code, name) {
+  const list = [{ code, name, at: Date.now() }, ...recentRooms().filter(x => x.code !== code)].slice(0, 8);
+  try { localStorage.setItem('wb-rooms', JSON.stringify(list)); } catch (e) {}
+}
+function forgetRoom(code) { try { localStorage.setItem('wb-rooms', JSON.stringify(recentRooms().filter(x => x.code !== code))); } catch (e) {} }
+function roomLink(code) { return location.origin + location.pathname + '?r=' + encodeURIComponent(code); }
+function setUrlRoom(code) {
+  try { history.replaceState(null, '', code ? '?r=' + encodeURIComponent(code) + location.hash : location.pathname); } catch (e) {}
+}
+function renderRoomBtn() {
+  $('roomBtn').hidden = !state.room;
+  $('tBtn').hidden = !state.room;
+  $('grpBtn').hidden = !state.room;
+  $('roomName').textContent = state.roomName || state.room || '';
+}
+function openLobby(msg) {
+  $('lbErr').hidden = !msg; if (msg) $('lbErr').textContent = msg;
+  $('mkErr').hidden = true;
+  const rec = recentRooms(), box = $('recent'); box.textContent = '';
+  rec.forEach(r => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'txtbtn';
+    b.textContent = (r.name || r.code) + '（' + r.code + '）';
+    b.onclick = () => tryJoin(r.code);
+    box.appendChild(b);
+  });
+  $('recentWrap').hidden = !rec.length;
+  $('hintMain').textContent = 'ルームに入ってください'; $('hintSub').textContent = '';
+  $('lobbyModal').hidden = false;
+  setTimeout(() => $('joinCode').focus(), 50);
+}
+async function tryJoin(code) {
+  $('joinBtn').disabled = true;
+  const r = await joinRoom(code);
+  $('joinBtn').disabled = false;
+  if (r === 'invalid') openLobby('合言葉は3〜20文字で入れてください');
+  else if (r === 'missing') { openLobby('そのルームは見つかりません。合言葉を確かめてください'); }
+  else if (r === 'error') openLobby('つながりませんでした。通信を確かめて、もう一度おしてください');
+}
+async function joinRoom(raw) {
+  const code = normRoom(raw);
+  if (!roomOk(code)) return 'invalid';
+  let info = null;
+  try { info = await baseS.get('rooms/' + code + '/info'); } catch (e) { return 'error'; }
+  if (!isObj(info)) return 'missing';
+  if (state.room && state.room !== code) resetSession();
+  state.room = code; state.roomName = String(info.name || '').slice(0, 40) || code;
+  rememberRoom(code, state.roomName);
+  setUrlRoom(code);
+  renderRoomBtn();
+  $('lobbyModal').hidden = true;
+  await startSession();
+  return 'ok';
+}
+async function createRoom() {
+  const err = t => { $('mkErr').textContent = t; $('mkErr').hidden = false; };
+  $('mkErr').hidden = true;
+  const name = $('rName').value.trim().slice(0, 40);
+  const code = normRoom($('rCode').value);
+  const a = $('rT1').value.trim(), b = $('rT2').value.trim();
+  if (!name) return err('ルームの名前を入れてください');
+  if (!roomOk(code)) return err('ルームの合言葉は3〜20文字にしてください（「. # $ [ ] /」は使えません）');
+  if (a.length < 6) return err('先生の合言葉は6文字以上にしてください');
+  if (a !== b) return err('2つの先生の合言葉が同じではありません');
+  if (a === code) return err('先生の合言葉は、ルームの合言葉とちがうものにしてください');
+  $('mkBtn').disabled = true;
+  try {
+    let exists = null;
+    try { exists = await baseS.get('rooms/' + code + '/info'); } catch (e) { return err('つながりませんでした。通信を確かめてください'); }
+    if (exists) return err('その合言葉は、もう使われています。ほかの合言葉にしてください');
+    const w = (p, d) => baseS.write('rooms/' + code + '/' + p, 'set', d).then(() => true, () => false);
+    if (!(await w('secret/teacherCode', a))) return err('その合言葉は、もう使われています。ほかの合言葉にしてください');
+    await w('teachers/' + uid, a);
+    if (!(await w('info', { name, at: Date.now() }))) return err('ルームを作れませんでした');
+    if (isLocal) { try { localStorage.setItem('wb-trial-role:' + code, 'teacher'); } catch (e) {} }
+    ['rName', 'rCode', 'rT1', 'rT2'].forEach(k => $(k).value = '');
+    $('mkBox').open = false;
+    const r = await joinRoom(code);
+    if (r === 'ok') { toast('ルーム「' + name + '」を作りました'); openRoomInfo(); }
+  } finally { $('mkBtn').disabled = false; }
+}
+function autoCode() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let c = ''; const r = new Uint32Array(6); crypto.getRandomValues(r);
+  r.forEach(n => { c += chars[n % chars.length]; });
+  $('rCode').value = c;
+}
+function openRoomInfo() {
+  if (!state.room) return;
+  $('rmTitle').textContent = state.roomName || 'ルーム';
+  $('rmCode').textContent = state.room;
+  $('rmLink').value = roomLink(state.room);
+  $('rmDelete').hidden = !state.teacher;
+  $('rmModal').hidden = false;
+}
+async function copyLink() {
+  const v = $('rmLink').value;
+  try { await navigator.clipboard.writeText(v); toast('リンクをコピーしました'); }
+  catch (e) { $('rmLink').focus(); $('rmLink').select(); toast('選んだリンクをコピーしてください'); }
+}
+function leaveRoom() {
+  $('rmModal').hidden = true;
+  resetSession();
+  state.room = null; state.roomName = '';
+  renderRoomBtn(); renderGroupBtn();
+  setUrlRoom(null);
+  openLobby();
+}
+async function deleteRoom() {
+  if (!state.teacher || !state.room) return;
+  $('rmModal').hidden = true;
+  const ok = await confirmBox('ルーム「' + state.roomName + '」を消します。すべての班のボード・写真・提出物が消え、元に戻せません。', 'ルームを消す');
+  if (!ok) return;
+  const code = state.room;
+  resetSession();
+  const done = await baseS.write('rooms/' + code, 'remove').then(() => true, () => false);
+  if (done) { forgetRoom(code); toast('ルームを消しました'); }
+  else toast('ルームを消せませんでした');
+  state.room = null; state.roomName = ''; renderRoomBtn(); renderGroupBtn(); setUrlRoom(null);
+  openLobby();
+}
+async function enterFromUrl() {
+  const q = new URLSearchParams(location.search).get('r');
+  if (q) { const r = await joinRoom(q); if (r !== 'ok') openLobby(r === 'missing' ? 'そのルームは見つかりません。合言葉を確かめてください' : r === 'error' ? 'つながりませんでした。通信を確かめてください' : null); }
+  else openLobby();
+}
+
 /* ================= wiring ================= */
 function bindUI() {
-  document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  document.querySelectorAll('.tool[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
   $('undoBtn').onclick = undo;
   $('prevF').onclick = () => { const i = state.frames.findIndex(f => f.id === state.frameId); if (i > 0) goFrame(state.frames[i - 1].id); };
   $('nextF').onclick = () => { const i = state.frames.findIndex(f => f.id === state.frameId); if (i < state.frames.length - 1) goFrame(state.frames[i + 1].id); };
@@ -1424,6 +1639,28 @@ function bindUI() {
   $('wStart').onclick = startWelcome;
   $('wTeacher').onclick = () => { $('wModal').hidden = true; openTeacher(); };
   $('tBtn').onclick = openTeacher;
+  $('roomBtn').onclick = openRoomInfo;
+  $('rmClose').onclick = () => { $('rmModal').hidden = true; };
+  $('rmCopy').onclick = copyLink;
+  $('rmLeave').onclick = leaveRoom;
+  $('rmDelete').onclick = deleteRoom;
+  $('joinBtn').onclick = () => tryJoin($('joinCode').value);
+  $('joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') tryJoin($('joinCode').value); });
+  $('mkBtn').onclick = createRoom;
+  $('rAuto').onclick = autoCode;
+  $('photoBtn').onclick = () => { if (!state.group) return; $('photoIn').value = ''; $('photoIn').click(); };
+  $('photoIn').onchange = () => { const f = $('photoIn').files && $('photoIn').files[0]; if (f) addPhoto(f); };
+  document.addEventListener('paste', e => {
+    const tag = (e.target && e.target.tagName) || '';
+    if (state.editing || tag === 'INPUT' || tag === 'TEXTAREA' || anyModal() || !state.group) return;
+    const f = [...((e.clipboardData && e.clipboardData.files) || [])].find(x => /^image\//.test(x.type));
+    if (f) { e.preventDefault(); addPhoto(f); }
+  });
+  stage.addEventListener('dragover', e => { if (state.group) e.preventDefault(); });
+  stage.addEventListener('drop', e => {
+    const f = [...((e.dataTransfer && e.dataTransfer.files) || [])].find(x => /^image\//.test(x.type));
+    if (f && state.group) { e.preventDefault(); addPhoto(f); }
+  });
   $('tClose').onclick = closeTeacher;
   $('tGo').onclick = teacherGo;
   $('tStudent').onclick = backToStudent;
@@ -1445,7 +1682,7 @@ function bindUI() {
   $('vClose').onclick = () => { $('vModal').hidden = true; viewing = null; };
   $('vReviewSave').onclick = saveReview;
   $('vSave').onclick = saveViewed;
-  ['sModal', 'vModal', 'gModal'].forEach(k => $(k).addEventListener('click', e => { if (e.target === $(k)) { $(k).hidden = true; if (k === 'vModal') viewing = null; } }));
+  ['sModal', 'vModal', 'gModal', 'rmModal'].forEach(k => $(k).addEventListener('click', e => { if (e.target === $(k)) { $(k).hidden = true; if (k === 'vModal') viewing = null; } }));
   $('tModal').addEventListener('click', e => { if (e.target === $('tModal')) closeTeacher(); });
   const sel = $('bgSel');
   BGS.forEach(([k, n]) => { const o = document.createElement('option'); o.value = k; o.textContent = n; sel.appendChild(o); });
@@ -1463,7 +1700,7 @@ function bindUI() {
   document.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) || '';
     if (anyModal()) {
-      if (e.key === 'Escape') { if (!$('cModal').hidden) { closeCompare(); return; } ['sModal', 'vModal', 'gModal', 'tModal'].forEach(k => $(k).hidden = true); viewing = null; }
+      if (e.key === 'Escape') { if (!$('cModal').hidden) { closeCompare(); return; } ['sModal', 'vModal', 'gModal', 'tModal', 'rmModal'].forEach(k => $(k).hidden = true); viewing = null; }
       return;
     }
     if (state.editing || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
@@ -1485,22 +1722,24 @@ function saveTitle() {
 
 async function startLocal() {
   $('setupModal').hidden = true;
-  isLocal = true; S = makeLocalStore(); uid = 'trial-user'; online = true;
-  startSession();
+  isLocal = true; baseS = makeLocalStore(); S = roomStore(baseS); uid = 'trial-user'; online = true;
+  started = true; setStatus();
+  enterFromUrl();
 }
 async function init() {
-  bindUI(); setTool('pen'); layout(); setHint(); renderGroupBtn();
+  bindUI(); setTool('pen'); layout(); setHint(); renderGroupBtn(); renderRoomBtn();
   state.frames = [{ id: 'f1', order: 0, bg: 'plain', virtual: true }]; state.frameId = 'f1'; renderFrames();
   $('tryLocal').onclick = startLocal;
   const configured = firebaseConfig && typeof firebaseConfig.apiKey === 'string' && !/YOUR_/.test(JSON.stringify(firebaseConfig));
   if (!configured) { $('hintMain').textContent = 'Firebase の設定がまだです'; $('setupModal').hidden = false; started = true; isLocal = true; setStatus(); isLocal = false; return; }
-  try { S = await makeFirebaseStore(); }
+  try { baseS = await makeFirebaseStore(); S = roomStore(baseS); }
   catch (e) { $('hintMain').textContent = 'Firebase を読み込めませんでした'; $('hintSub').textContent = '通信を確かめて、ページを読み込み直してください'; return; }
   S.connected(c => { online = c; setStatus(); });
   authApi.onUser(async user => {
     if (!user) { try { await authApi.anon(); } catch (e) { toast('ログインできませんでした。Firebase の「匿名」ログインが有効か確かめてください'); } return; }
     uid = user.uid;
-    startSession();
+    started = true; setStatus();
+    if (state.room) startSession(); else enterFromUrl();
   });
 }
 init();
