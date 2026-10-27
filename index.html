@@ -318,6 +318,19 @@ button{cursor:pointer}
 @media (prefers-reduced-motion:reduce){.cursor{transition:none}.toast{transition:none}}
 
 [hidden]{display:none!important}
+.dialog.full{width:min(1500px,100%);height:calc(100% - 8px);display:flex;flex-direction:column;padding:16px}
+.chead{flex-wrap:wrap;gap:8px}
+.share{background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin:0 0 12px}
+.share b{color:var(--accent)}
+.panes{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:12px;align-content:start}
+.pane{border:1px solid var(--line);border-radius:12px;background:var(--bg);padding:8px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.pane .ph{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pane select{height:34px;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:0 8px;font-weight:700}
+.pane .ph .sp{flex:1}
+.pane .cv{position:relative;aspect-ratio:16/9;max-width:100%;border-radius:8px;overflow:hidden;background:#FCFCF9;border:1px solid var(--line)}
+.pane .cv canvas{display:block;width:100%;height:100%}
+.pane .msg{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:12px;color:#7B8494;font-size:14px;line-height:1.7}
+.pane .live{font-size:11px;color:var(--muted)}
 html,body,button,select,input,textarea,a,.modal,.dialog{touch-action:manipulation}
 .board,.stage{-webkit-touch-callout:none}
 img{max-width:100%}
@@ -342,6 +355,7 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
     <div class="grow"></div>
     <div class="people" id="people" hidden><div class="avatars" id="avatars"></div><span class="count" id="pcount"></span></div>
     <span class="pill" id="status" data-s="connecting"><i></i><span id="statusText">接続中…</span></span>
+    <button class="txtbtn" id="cmpBtn" type="button" hidden>くらべる</button>
     <button class="txtbtn" id="inboxBtn" type="button" hidden>提出箱 <span class="badge" id="inboxBadge" hidden>0</span></button>
     <button class="txtbtn" id="mineBtn" type="button" hidden>提出した物 <span class="badge" id="mineBadge" hidden>0</span></button>
     <button class="txtbtn ghost" id="tBtn" type="button">先生用はこちら</button>
@@ -475,6 +489,22 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
       <button class="txtbtn" id="tChange" type="button" hidden>合言葉を変える</button>
       <button class="txtbtn primary" id="tGo" type="button">先生として入る</button>
     </div>
+  </div>
+</div>
+
+<!-- compare -->
+<div class="modal" id="cModal" hidden>
+  <div class="dialog full" role="dialog" aria-modal="true" aria-labelledby="cTitle">
+    <div class="row between chead">
+      <h2 id="cTitle" style="margin:0">班をくらべる</h2>
+      <div class="row">
+        <button class="txtbtn" id="cAdd" type="button">＋ ならべる</button>
+        <button class="txtbtn" id="cClose" type="button">閉じる</button>
+      </div>
+    </div>
+    <p class="sub" id="cSub">見るだけの画面です。書きこむときは、閉じて自分の班のボードにもどってください。</p>
+    <label class="chk share" id="cShareWrap" hidden><input type="checkbox" id="cShare"><span><b>生徒にも見せる</b>（オンにすると、生徒も「くらべる」でほかの班のボードを見られます。書きこめるのは自分の班だけです）</span></label>
+    <div class="panes" id="panes"></div>
   </div>
 </div>
 

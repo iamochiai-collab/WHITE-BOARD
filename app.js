@@ -28,7 +28,7 @@ const state = {
   tool: 'pen', inkColor: '#22242A', inkW: 6, markColor: '#FFD60A', noteColor: '#FFE97A', textColor: '#22242A',
   group: null, groups: defaultGroups(6), lock: false, myGroup: null, myName: '',
   frames: [], frameId: null, items: new Map(), local: new Map(), sel: null, editing: null,
-  teacher: false, scale: 1, title: ''
+  teacher: false, scale: 1, title: '', share: false
 };
 let S = null;            // store (Firebase or local)
 let uid = null, isLocal = false, authApi = null;
@@ -660,7 +660,7 @@ async function setGroup(g) {
   if (location.hash.slice(1) !== g) { try { history.replaceState(null, '', '#' + g); } catch (e) {} }
   subscribeGroup();
   joinPresence();
-  setHint();
+  setHint(); updateCmpBtn();
   return true;
 }
 function renderGroupBtn() {
@@ -1215,6 +1215,131 @@ function closeTeacher() {
   if (!state.group && !state.teacher && started && S) openWelcome(GID.test(location.hash.slice(1)) ? location.hash.slice(1) : null);
 }
 
+/* ================= compare groups ================= */
+const panes = [];
+function canCompare() { return state.teacher || state.share; }
+function updateCmpBtn() {
+  $('cmpBtn').hidden = !S || !started || !canCompare() || (!state.teacher && !state.group);
+  if (!$('cModal').hidden && !canCompare()) { closeCompare(); toast('先生が「生徒にも見せる」をオフにしました'); }
+  if (!$('cModal').hidden) { $('cShare').checked = state.share; refreshPaneMsgs(); }
+}
+function openCompare() {
+  if (!canCompare()) return;
+  stopEdit();
+  $('cShareWrap').hidden = !state.teacher;
+  $('cShare').checked = state.share;
+  $('cSub').textContent = state.teacher
+    ? '班のボードを並べて見られます。見るだけの画面です。「開く」を押すと、その班のボードに移って書きこめます。'
+    : '班のボードを並べて見られます。見るだけの画面です。書きこむときは、閉じて自分の班のボードにもどってください。';
+  if (!panes.length) {
+    const ids = state.groups.map(g => g.id);
+    const first = state.group && ids.includes(state.group) ? state.group : ids[0];
+    const second = ids.find(id => id !== first);
+    addPane(first); if (second) addPane(second);
+  }
+  $('cModal').hidden = false;
+}
+function closeCompare() {
+  $('cModal').hidden = true;
+  while (panes.length) removePane(panes[0]);
+}
+function addPane(g) {
+  if (panes.length >= 4) { toast('ならべられるのは4つまでです'); return; }
+  if (!g) { const used = new Set(panes.map(p => p.g)); g = (state.groups.find(x => !used.has(x.id)) || state.groups[0]).id; }
+  const p = { g, f: null, frames: [], items: new Map(), timer: 0, unsubF: null, unsubI: null, denied: false };
+  const el = document.createElement('div'); el.className = 'pane';
+  const ph = document.createElement('div'); ph.className = 'ph';
+  const gs = document.createElement('select'); gs.setAttribute('aria-label', '班');
+  state.groups.forEach(x => { const o = document.createElement('option'); o.value = x.id; o.textContent = x.name; gs.appendChild(o); });
+  gs.value = g;
+  const fs = document.createElement('select'); fs.setAttribute('aria-label', 'フレーム');
+  const sp = document.createElement('span'); sp.className = 'sp';
+  const live = document.createElement('span'); live.className = 'live'; live.textContent = '自動で更新';
+  const open = document.createElement('button'); open.type = 'button'; open.className = 'txtbtn'; open.textContent = '開く';
+  const rm = document.createElement('button'); rm.type = 'button'; rm.className = 'txtbtn'; rm.textContent = '外す';
+  ph.append(gs, fs, sp, live, open, rm);
+  const cv = document.createElement('div'); cv.className = 'cv';
+  const msg = document.createElement('div'); msg.className = 'msg'; msg.textContent = '読み込み中…';
+  cv.appendChild(msg);
+  el.append(ph, cv);
+  $('panes').appendChild(el);
+  Object.assign(p, { el, gs, fs, cv, msg, open, rm });
+  gs.onchange = () => { p.g = gs.value; p.f = null; paneSubscribe(p); };
+  fs.onchange = () => { p.f = fs.value; paneItems(p); };
+  rm.onclick = () => removePane(p);
+  open.onclick = async () => {
+    const g2 = p.g, f2 = p.f;
+    if (!state.teacher && g2 !== state.group) return;
+    closeCompare();
+    if (await setGroup(g2)) { if (f2 && state.frames.find(x => x.id === f2)) goFrame(f2); }
+  };
+  panes.push(p);
+  paneSubscribe(p);
+  refreshPaneMsgs();
+}
+function removePane(p) {
+  if (p.unsubF) p.unsubF(); if (p.unsubI) p.unsubI(); clearTimeout(p.timer);
+  p.el.remove(); panes.splice(panes.indexOf(p), 1);
+  refreshPaneMsgs();
+}
+function refreshPaneMsgs() {
+  panes.forEach(p => {
+    p.open.hidden = !(state.teacher || p.g === state.group);
+    p.rm.hidden = panes.length <= 1;
+  });
+  $('cAdd').disabled = panes.length >= 4;
+}
+function paneSubscribe(p) {
+  if (p.unsubF) { p.unsubF(); p.unsubF = null; }
+  if (p.unsubI) { p.unsubI(); p.unsubI = null; }
+  p.items = new Map(); p.denied = false; p.msg.hidden = false; p.msg.textContent = '読み込み中…';
+  refreshPaneMsgs();
+  const g = p.g;
+  p.unsubF = S.onValue('groups/' + g + '/frames', v => {
+    if (p.g !== g) return;
+    let fr = isObj(v) ? Object.keys(v).filter(k => isObj(v[k])).map(k => Object.assign({ id: k }, v[k])) : [];
+    if (!fr.length) fr = [{ id: 'f1', order: 0, bg: 'plain' }];
+    fr.sort((a, b) => (a.order || 0) - (b.order || 0));
+    p.frames = fr;
+    p.fs.textContent = '';
+    fr.forEach((f, i) => { const o = document.createElement('option'); o.value = f.id; o.textContent = 'フレーム ' + (i + 1); p.fs.appendChild(o); });
+    const keep = p.f && fr.find(f => f.id === p.f);
+    if (!keep) p.f = fr[0].id;
+    p.fs.value = p.f;
+    if (!keep || !p.unsubI) paneItems(p); else paneDraw(p);
+  }, e => paneDenied(p, e));
+}
+function paneDenied(p, e) {
+  p.denied = true; p.msg.hidden = false;
+  p.msg.textContent = isDenied(e)
+    ? (state.teacher ? 'この班のボードを読めませんでした' : 'ほかの班のボードは、先生が「生徒にも見せる」をオンにすると見られます')
+    : '読み込めませんでした';
+}
+function paneItems(p) {
+  if (p.unsubI) { p.unsubI(); p.unsubI = null; }
+  p.items = new Map();
+  const g = p.g, f = p.f;
+  p.unsubI = S.onChildren('groups/' + g + '/items/' + f, {
+    add: (k, v) => { if (p.g === g && p.f === f) { p.items.set(k, v); paneDraw(p); } },
+    change: (k, v) => { if (p.g === g && p.f === f) { p.items.set(k, v); paneDraw(p); } },
+    remove: k => { if (p.g === g && p.f === f) { p.items.delete(k); paneDraw(p); } }
+  }, e => paneDenied(p, e));
+  paneDraw(p);
+}
+function paneDraw(p) {
+  clearTimeout(p.timer);
+  p.timer = setTimeout(async () => {
+    if (!panes.includes(p)) return;
+    const fr = p.frames.find(x => x.id === p.f);
+    const c = await drawFrame([...p.items.entries()], fr && fr.bg, 1);
+    if (!panes.includes(p) || p.denied) return;
+    const old = p.cv.querySelector('canvas'); if (old) old.remove();
+    p.cv.insertBefore(c, p.msg);
+    p.msg.hidden = p.items.size > 0;
+    if (!p.items.size) p.msg.textContent = 'まだ何も書かれていません';
+  }, 250);
+}
+
 /* ================= session ================= */
 function resetSession() {
   sessionUnsubs.forEach(f => { try { f(); } catch (e) {} }); sessionUnsubs = [];
@@ -1224,8 +1349,9 @@ function resetSession() {
   state.group = null; state.teacher = false; state.myGroup = null; state.myName = '';
   state.items = new Map(); renderItems();
   board.classList.add('nogroup');
-  ['inboxBtn', 'mineBtn', 'submitBtn'].forEach(k => $(k).hidden = true);
-  ['modal', 'wModal', 'gModal', 'sModal', 'vModal'].forEach(k => $(k).hidden = true);
+  ['inboxBtn', 'mineBtn', 'submitBtn', 'cmpBtn'].forEach(k => $(k).hidden = true);
+  closeCompare(); state.share = false;
+  ['modal', 'wModal', 'gModal', 'sModal', 'vModal', 'cModal'].forEach(k => $(k).hidden = true);
   myIndex = []; allSubs = [];
   undoStack.length = 0; $('undoBtn').disabled = true;
 }
@@ -1242,6 +1368,7 @@ async function startSession() {
     state.title = isObj(v) && typeof v.title === 'string' ? v.title : '';
     if (document.activeElement !== titleEl) titleEl.value = state.title;
   }, () => {}));
+  sessionUnsubs.push(S.onValue('meta/share', v => { state.share = v === true; updateCmpBtn(); }, () => {}));
   let groupsReady; const groupsLoaded = new Promise(r => { groupsReady = r; });
   sessionUnsubs.push(S.onValue('meta/groups', v => {
     const list = isObj(v) ? asList(v.list).filter(g => isObj(g) && GID.test(g.id)).map(g => ({ id: g.id, name: String(g.name || '').slice(0, 12) || g.id.slice(1) + '班' })) : [];
@@ -1273,7 +1400,7 @@ async function startSession() {
     $('mineBtn').hidden = false; subscribeMine();
   }
   $('submitBtn').hidden = false;
-  setStatus();
+  setStatus(); updateCmpBtn();
   if (pendingTeacherOpen) { pendingTeacherOpen = false; if (!state.teacher) openTeacher(); }
 }
 
@@ -1303,6 +1430,15 @@ function bindUI() {
   $('tChange').onclick = () => { setTMode('change'); setTimeout(() => $('tNew').focus(), 50); };
   ['tCode', 'tNew2'].forEach(k => $(k).addEventListener('keydown', e => { if (e.key === 'Enter') teacherGo(); }));
   $('inboxBtn').onclick = () => openSubs('inbox');
+  $('cmpBtn').onclick = openCompare;
+  $('cClose').onclick = closeCompare;
+  $('cAdd').onclick = () => addPane();
+  $('cShare').onchange = async () => {
+    const v = $('cShare').checked;
+    const ok = await write('meta/share', 'set', v);
+    if (ok) { state.share = v; toast(v ? '生徒もほかの班を見られるようにしました' : '生徒はほかの班を見られなくなりました'); }
+    else $('cShare').checked = state.share;
+  };
   $('mineBtn').onclick = () => openSubs('mine');
   $('sClose').onclick = () => { $('sModal').hidden = true; };
   $('fGroup').onchange = renderSubList; $('fState').onchange = renderSubList;
@@ -1327,7 +1463,7 @@ function bindUI() {
   document.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) || '';
     if (anyModal()) {
-      if (e.key === 'Escape') { ['sModal', 'vModal', 'gModal', 'tModal'].forEach(k => $(k).hidden = true); viewing = null; }
+      if (e.key === 'Escape') { if (!$('cModal').hidden) { closeCompare(); return; } ['sModal', 'vModal', 'gModal', 'tModal'].forEach(k => $(k).hidden = true); viewing = null; }
       return;
     }
     if (state.editing || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;

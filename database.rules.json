@@ -28,7 +28,7 @@
     },
     "groups": {
       "$g": {
-        ".read": "auth != null && ((auth != null && root.child('secret/teacherCode').exists() && root.child('teachers/' + auth.uid).val() == root.child('secret/teacherCode').val()) || root.child('users/' + auth.uid + '/group').val() == $g)",
+        ".read": "auth != null && ((auth != null && root.child('secret/teacherCode').exists() && root.child('teachers/' + auth.uid).val() == root.child('secret/teacherCode').val()) || root.child('users/' + auth.uid + '/group').val() == $g || root.child('meta/share').val() == true)",
         ".write": "auth != null && ((auth != null && root.child('secret/teacherCode').exists() && root.child('teachers/' + auth.uid).val() == root.child('secret/teacherCode').val()) || root.child('users/' + auth.uid + '/group').val() == $g)"
       }
     },
