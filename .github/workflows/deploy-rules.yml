@@ -1,0 +1,36 @@
+name: Firebase のルールを反映
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - database.rules.json
+      - firebase.json
+      - .github/workflows/deploy-rules.yml
+  workflow_dispatch:
+
+jobs:
+  deploy-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 鍵を準備する
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT がまだ登録されていないので、ルールの自動反映をとばしました（README の「ルールの自動反映」を見てください）"
+            echo "SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+
+      - name: ルールを Firebase に反映する
+        if: env.SKIP != '1'
+        run: npx -y firebase-tools@13 deploy --only database --project white-board-ca0c1 --non-interactive
