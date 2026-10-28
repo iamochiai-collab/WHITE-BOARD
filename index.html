@@ -317,6 +317,8 @@ button{cursor:pointer}
 @media (prefers-reduced-motion:reduce){.cursor{transition:none}.toast{transition:none}}
 
 [hidden]{display:none!important}
+.pdfwhere{display:grid;gap:6px;background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.pdfwhere .flabel{margin:0}
 .sheet{position:absolute;pointer-events:none;user-select:none;-webkit-user-drag:none;background:#fff;box-shadow:0 0 0 1px #D6DBE3,0 2px 10px rgba(0,0,0,.08)}
 #pdfRange{margin-bottom:12px}
 #pdfRange select{height:36px;border:1px solid var(--line);border-radius:9px;background:var(--bg);padding:0 8px}
@@ -481,7 +483,11 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
     <h2 id="pdfTitle">PDFをシートにする</h2>
     <p class="sub" id="pdfMsg"></p>
     <div class="field" id="pdfRange"><label for="pdfFrom">ページ</label><select id="pdfFrom"></select><span>〜</span><select id="pdfTo"></select></div>
-    <label class="chk" id="pdfAllWrap" hidden><input type="checkbox" id="pdfAll"><span>すべての班に入れる（先生だけ）</span></label>
+    <div class="pdfwhere" id="pdfAllWrap" hidden>
+      <div class="flabel">どこに入れますか</div>
+      <label class="chk"><input type="radio" name="pdfWhere" id="pdfAll" value="all" checked><span><b>すべての班</b>に入れる（生徒みんなのボードに入ります）</span></label>
+      <label class="chk"><input type="radio" name="pdfWhere" id="pdfOne" value="one"><span id="pdfOneLab">この班だけに入れる</span></label>
+    </div>
     <p class="lockmsg" id="pdfProg" hidden></p>
     <div class="row" style="margin-top:14px">
       <button class="txtbtn" id="pdfCancel" type="button">やめる</button>
@@ -538,6 +544,7 @@ a.txtbtn{text-decoration:none;color:var(--fg)}
     <h2 id="dTitle">全班に配る</h2>
     <p class="sub">いま開いているフレームを、選んだ班のボードに新しいフレームとして配ります。配ったあとは、それぞれの班で自由に書きこめます。</p>
     <div class="dlist" id="dList"></div>
+    <label class="chk" style="margin-top:12px"><input type="checkbox" id="dEvery"><span>この班の<b>すべてのフレーム</b>を配る（PDFを何ページも入れたときなど）</span></label>
     <div class="row between" style="margin-top:12px">
       <button class="txtbtn" id="dAll" type="button">すべて選ぶ</button>
       <div class="row"><button class="txtbtn" id="dCancel" type="button">やめる</button><button class="txtbtn primary" id="dGo" type="button">配る</button></div>

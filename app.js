@@ -558,12 +558,14 @@ board.addEventListener('pointerdown', e => {
     e.preventDefault();
     const w = 240, h = 240;
     const id = addItem({ type: 'note', x: r1(clamp(p.x - w / 2, 0, W - w)), y: r1(clamp(p.y - h / 2, 0, H - h)), w, h, color: state.noteColor, text: '' });
-    setTool(backTool()); select(id); requestAnimationFrame(() => startEdit(id));
+    setTool(backTool()); select(id);
+    act = { kind: 'place', pid: e.pointerId, id }; board.setPointerCapture(e.pointerId);
   } else if (t === 'text') {
     e.preventDefault();
     const id = addItem({ type: 'text', x: r1(clamp(p.x - 10, 0, W - 120)), y: r1(clamp(p.y - 28, 0, H - 60)), w: 420, color: state.textColor, fs: 36, text: '' });
     undoStack[undoStack.length - 1]._create = id;
-    setTool(backTool()); select(id); requestAnimationFrame(() => startEdit(id));
+    setTool(backTool()); select(id);
+    act = { kind: 'place', pid: e.pointerId, id }; board.setPointerCapture(e.pointerId);
   } else if (t === 'select') {
     const handle = e.target.closest('.handle');
     const el = e.target.closest('.item');
@@ -624,9 +626,17 @@ function endGesture(e) {
   if (!act || e.pointerId !== act.pid) return;
   const a = act; act = null;
   if (a.kind === 'pan') { board.classList.remove('panning'); return; }
+  if (a.kind === 'place') { startEdit(a.id); return; }
   if (a.kind === 'ink') {
     livePath.removeAttribute('d');
     let pts = a.pts;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < pts.length; i += 2) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]); }
+    if (x1 - x0 < 8 && y1 - y0 < 8) {
+      const tp = { x: pts[0], y: pts[1] };
+      const hit = [...state.items.entries()].filter(([id, it]) => (it.type === 'note' || it.type === 'text') && hitBox(id, it, tp)).sort((m, n) => (n[1].z || 0) - (m[1].z || 0))[0];
+      if (hit) { startEdit(hit[0]); return; }
+    }
     if (pts.length === 2) pts = [pts[0], pts[1], r1(pts[0] + 0.2), r1(pts[1] + 0.2)];
     let mx = Infinity, my = Infinity;
     for (let i = 0; i < pts.length; i += 2) { mx = Math.min(mx, pts[i]); my = Math.min(my, pts[i + 1]); }
@@ -642,7 +652,7 @@ function endGesture(e) {
       const fk = a.fk, ox = a.ox, oy = a.oy, id = a.id;
       updItem(fk, id, { x: loc.x, y: loc.y, z: Date.now() });
       pushUndo({ undo: () => updItem(fk, id, { x: ox, y: oy }) });
-    } else if (!a.moved && a.was) {
+    } else if (!a.moved) {
       const it = state.items.get(a.id); if (it && (it.type === 'note' || it.type === 'text')) startEdit(a.id);
     }
   } else if (a.kind === 'resize') {
@@ -871,21 +881,32 @@ function renderFrames() {
   $('prevF').disabled = i <= 0; $('nextF').disabled = i >= n - 1;
   $('delF').disabled = n <= 1;
   $('delF').hidden = !state.teacher; $('clearF').hidden = !state.teacher;
-  const chips = $('chips'); chips.textContent = '';
+  const chips = $('chips');
   const here = new Map();
   peers.forEach(p => { if (!p.isMe && p.presence && p.presence.f) here.set(p.presence.f, p.presence.col || '#888'); });
-  state.frames.forEach((f, k) => {
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = k + 1;
-    b.setAttribute('aria-label', 'フレーム ' + (k + 1)); b.setAttribute('aria-current', String(f.id === state.frameId));
-    if (here.has(f.id)) { const d = document.createElement('span'); d.className = 'dot'; d.style.background = here.get(f.id); b.appendChild(d); b.title = 'だれかがこのフレームを見ています'; }
-    b.onclick = () => { if (f.id !== state.frameId) goFrame(f.id); };
-    chips.appendChild(b);
+  const key = state.frames.map(f => f.id).join(',');
+  if (chips._key !== key) {
+    chips._key = key; chips.textContent = '';
+    state.frames.forEach((f, k) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = k + 1;
+      b.dataset.fid = f.id; b.setAttribute('aria-label', 'フレーム ' + (k + 1));
+      const d = document.createElement('span'); d.className = 'dot'; d.hidden = true; b.appendChild(d);
+      b.onclick = () => { if (f.id !== state.frameId) goFrame(f.id); };
+      chips.appendChild(b);
+    });
+  }
+  chips.querySelectorAll('.chip').forEach(b => {
+    const fid = b.dataset.fid, cur = String(fid === state.frameId), d = b.querySelector('.dot');
+    if (b.getAttribute('aria-current') !== cur) b.setAttribute('aria-current', cur);
+    const col = here.get(fid);
+    d.hidden = !col; if (col && d.style.background !== col) d.style.background = col;
+    b.title = col ? 'だれかがこのフレームを見ています' : '';
   });
   const f = curFrame();
   let opt = $('bgSel').querySelector('option[value="nosheet"]');
   if (f && f.sheet && !opt) { opt = document.createElement('option'); opt.value = 'nosheet'; opt.textContent = 'PDFシートを外す'; $('bgSel').appendChild(opt); }
   else if (!(f && f.sheet) && opt) opt.remove();
-  if (f) $('bgSel').value = f.bg || 'plain';
+  if (f && $('bgSel').value !== (f.bg || 'plain')) $('bgSel').value = f.bg || 'plain';
 }
 function applyBg() {
   const f = curFrame(), k = f && f.bg;
@@ -1049,7 +1070,8 @@ async function openPdf(file) {
   for (let i = 1; i <= n; i++) { for (const sel of [from, to]) { const o = document.createElement('option'); o.value = i; o.textContent = i; sel.appendChild(o); } }
   from.value = '1'; to.value = String(Math.min(n, 30));
   $('pdfRange').hidden = n <= 1;
-  $('pdfAllWrap').hidden = !state.teacher; $('pdfAll').checked = false;
+  $('pdfAllWrap').hidden = !state.teacher; $('pdfAll').checked = true;
+  $('pdfOneLab').textContent = gName(state.group) + 'だけに入れる（いま開いている班）';
   $('pdfProg').hidden = true; $('pdfGo').disabled = false; $('pdfCancel').disabled = false;
   $('pdfModal').hidden = false;
 }
@@ -1227,7 +1249,7 @@ function subscribeInbox() {
   }, () => {}));
 }
 function openSubs(mode) {
-  const m = $('sModal'); m.dataset.mode = mode;
+  const m = $('sModal'); m.dataset.mode = mode; subListKey = '';
   $('sTitle').textContent = mode === 'inbox' ? '提出箱' : '提出した物';
   $('sSub').textContent = mode === 'inbox'
     ? '生徒が提出したフレームです。開くと、確認済みの印と、ひとことを返せます。'
@@ -1240,13 +1262,17 @@ function openSubs(mode) {
   m.hidden = false;
   renderSubList();
 }
+let subListKey = '';
 function renderSubList() {
-  const mode = $('sModal').dataset.mode, box = $('sList'); box.textContent = '';
+  const mode = $('sModal').dataset.mode, box = $('sList');
   let rows;
   if (mode === 'inbox') {
     const fg = $('fGroup').value || 'all', fs = $('fState').value;
     rows = allSubs.filter(x => (fg === 'all' || x.g === fg) && (fs === 'all' || (fs === 'ok' ? x.rv && x.rv.ok : !(x.rv && x.rv.ok))));
   } else rows = myIndex;
+  const key = mode + '|' + rows.map(x => x.sid + ':' + (x.rv ? (x.rv.ok ? 1 : 0) + (x.rv.m || '') : '') + ':' + (x.name || '')).join('|') + '|' + state.groups.map(g => g.name).join(',');
+  if (key === subListKey && box.childElementCount) return;
+  subListKey = key; box.textContent = '';
   if (!rows.length) {
     const e = document.createElement('div'); e.className = 'empty';
     e.textContent = mode === 'inbox' ? 'まだ提出はありません。生徒が下の「先生に提出」を押すと、ここに届きます。' : 'まだ提出していません。ボードの下の「先生に提出」から送れます。';
@@ -1716,6 +1742,7 @@ function openDistribute() {
     const c = document.createElement('input'); c.type = 'checkbox'; c.value = g.id; c.checked = g.id !== state.group;
     l.append(c, document.createTextNode(g.name)); box.appendChild(l);
   });
+  $('dEvery').checked = false;
   $('dModal').hidden = false;
 }
 async function distribute() {
@@ -1723,19 +1750,34 @@ async function distribute() {
   if (!gs.length) { toast('配る班を選んでください'); return; }
   stopEdit();
   $('dGo').disabled = true;
-  const items = [...state.items.values()], bg = (curFrame() && curFrame().bg) || 'plain', order = Date.now();
+  const every = $('dEvery').checked;
+  const frames = every ? state.frames.slice() : [curFrame()].filter(Boolean);
+  // 配るフレームの中身を先に集める
+  const srcs = [];
+  for (const f of frames) {
+    let items;
+    if (f.id === state.frameId) items = [...state.items.values()];
+    else { let raw = null; try { raw = await S.get(itemsPath(fkOf(f.id))); } catch (e) {} items = isObj(raw) ? Object.values(raw).map(decodeItem).filter(Boolean) : []; }
+    if (!items.length && typeof f.sheet !== 'string' && every) continue;
+    srcs.push({ f, items });
+  }
+  const base = Date.now();
   let okAll = true;
   for (const g of gs) {
-    const fid = rid(), obj = {};
-    items.forEach(v => { const c = Object.assign({}, v, { by: uid, ts: Date.now() }); obj[rid()] = encodeItem(c); });
-    const fr = { order, bg }, cf = curFrame();
-    if (cf && typeof cf.sheet === 'string') Object.assign(fr, { sheet: cf.sheet, sw: cf.sw, sh: cf.sh });
-    const ok1 = await write('groups/' + g + '/frames/' + fid, 'set', fr);
-    const ok2 = !items.length || await write('groups/' + g + '/items/' + fid, 'set', obj);
-    okAll = okAll && ok1 && ok2;
+    for (let i = 0; i < srcs.length; i++) {
+      const { f, items } = srcs[i];
+      const fid = rid(), obj = {};
+      items.forEach(v => { const c = Object.assign({}, v, { by: uid, ts: Date.now() }); obj[rid()] = encodeItem(c); });
+      const fr = { order: base + i, bg: f.bg || 'plain' };
+      if (typeof f.sheet === 'string') Object.assign(fr, { sheet: f.sheet, sw: f.sw, sh: f.sh });
+      const ok1 = await write('groups/' + g + '/frames/' + fid, 'set', fr);
+      const ok2 = !items.length || await write('groups/' + g + '/items/' + fid, 'set', obj);
+      okAll = okAll && ok1 && ok2;
+    }
   }
   $('dGo').disabled = false; $('dModal').hidden = true;
-  toast(okAll ? gs.length + 'つの班に配りました（それぞれの班の最後のフレームに入っています）' : '配れなかった班があります');
+  const what = srcs.length > 1 ? srcs.length + 'つのフレームを' : '';
+  toast(okAll ? what + gs.length + 'つの班に配りました（それぞれの班の最後に入っています）' : '配れなかった班があります');
 }
 
 /* ================= 先生の画面をみんなに見せる ================= */
