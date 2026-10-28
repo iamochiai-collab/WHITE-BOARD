@@ -1,6 +1,7 @@
 import { firebaseConfig } from './firebase-config.js';
 
 const FB = '10.12.2';
+const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/';
 const UDFONT = '\"UD デジタル 教科書体 N-R\",\"UD Digi Kyokasho N-R\",\"UDDigiKyokashoN-R\",\"BIZ UDPGothic\",\"Hiragino Sans\",sans-serif';
 const W = 1600, H = 900;
 const NOTE_COLORS = [['#FFE97A','レモン'],['#FFC4D6','さくら'],['#C6EFA4','わかば'],['#B5DEFF','そら'],['#FFCF9E','みかん'],['#DCCEFF','ふじ']];
@@ -426,7 +427,7 @@ function renderItems() {
     if (state.editing === id) state.editing = null;
     if (state.sel === id) state.sel = null;
   }
-  hintEl.hidden = state.items.size > 0 && !!state.group;
+  hintEl.hidden = (state.items.size > 0 || !!(curFrame() && curFrame().sheet)) && !!state.group;
   renderCtx();
 }
 function renderOne(id) { const el = els.get(id), it = state.items.get(id); if (el && it) updateEl(el, id, it, el.style.zIndex); }
@@ -746,7 +747,7 @@ function renderGroupBtn() {
 function setHint() {
   if (!state.group) { $('hintMain').textContent = '最初に、名前と班を入れてください'; $('hintSub').textContent = ''; }
   else { $('hintMain').textContent = 'ペンで書いたり、付箋や写真を貼ったりしてみましょう'; $('hintSub').textContent = gName(state.group) + 'のボードです。書いた内容は自動で保存され、同じ班の人にすぐ届きます'; }
-  hintEl.hidden = state.items.size > 0 && !!state.group;
+  hintEl.hidden = (state.items.size > 0 || !!(curFrame() && curFrame().sheet)) && !!state.group;
 }
 function subscribeGroup() {
   if (unsubFrames) { unsubFrames(); unsubFrames = null; }
@@ -880,11 +881,32 @@ function renderFrames() {
     b.onclick = () => { if (f.id !== state.frameId) goFrame(f.id); };
     chips.appendChild(b);
   });
-  const f = curFrame(); if (f) $('bgSel').value = f.bg || 'plain';
+  const f = curFrame();
+  let opt = $('bgSel').querySelector('option[value="nosheet"]');
+  if (f && f.sheet && !opt) { opt = document.createElement('option'); opt.value = 'nosheet'; opt.textContent = 'PDFシートを外す'; $('bgSel').appendChild(opt); }
+  else if (!(f && f.sheet) && opt) opt.remove();
+  if (f) $('bgSel').value = f.bg || 'plain';
 }
 function applyBg() {
   const f = curFrame(), k = f && f.bg;
   $('bgl').style.backgroundImage = BG_SVG[k] ? 'url("' + bgData(k) + '")' : 'none';
+  applySheet();
+}
+function sheetRect(sw, sh) {
+  sw = +sw || W; sh = +sh || H;
+  const sc = Math.min(W / sw, H / sh), w = sw * sc, h = sh * sc;
+  return { x: (W - w) / 2, y: (H - h) / 2, w, h };
+}
+function applySheet() {
+  const f = curFrame(), el = $('sheet');
+  if (!f || typeof f.sheet !== 'string') { el.hidden = true; el.removeAttribute('src'); el._id = null; return; }
+  const r = sheetRect(f.sw, f.sh);
+  el.style.left = r.x + 'px'; el.style.top = r.y + 'px'; el.style.width = r.w + 'px'; el.style.height = r.h + 'px';
+  if (state.group) hintEl.hidden = true;
+  const c = imgCache.get(f.sheet);
+  if (!c) { el.hidden = true; getImg(f.sheet).then(() => applySheet()); return; }
+  if (c.el) { if (el._id !== f.sheet) { el.src = c.el.src; el._id = f.sheet; } el.hidden = false; }
+  else el.hidden = true;
 }
 function addFrame() {
   if (!state.group) return;
@@ -921,9 +943,18 @@ async function clearFrame() {
   write(itemsPath(fk), 'remove');
   pushUndo({ undo: () => gone.forEach(([id, it]) => setItem(fk, id, it)) });
 }
-function setBg(k) {
+async function setBg(k) {
   const f = curFrame(); if (!f) return;
+  if (k === 'nosheet') {
+    $('bgSel').value = f.bg || 'plain';
+    const ok = await confirmBox('このフレームのPDFシートを外します。シートの上に書いたものは残ります。', 'シートを外す');
+    if (!ok) return;
+    delete f.sheet; delete f.sw; delete f.sh; applyBg(); renderFrames(); renderItems();
+    write(framePath(curFK()), 'update', { sheet: null, sw: null, sh: null });
+    return;
+  }
   f.bg = k; applyBg();
+  if (state.presenting) syncPresent();
   if (f.virtual && !f._creating) ensureFrame(curFK());
   else write(framePath(curFK()), 'update', { order: f.order || 0, bg: k });
 }
@@ -944,22 +975,24 @@ function getImg(id) {
   imgCache.set(id, c);
   return c.p;
 }
+function encodeLimited(src, sw, sh, limit, max, q) {
+  let out = null;
+  for (let i = 0; i < 8; i++) {
+    const sc = Math.min(1, max / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * sc)), h = Math.max(1, Math.round(sh * sc));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(src, 0, 0, w, h);
+    out = { data: c.toDataURL('image/jpeg', q), w, h };
+    if (out.data.length <= limit) break;
+    max = Math.round(max * 0.85); q = Math.max(0.5, q - 0.06);
+  }
+  return out;
+}
 async function compressImage(file) {
   const url = URL.createObjectURL(file);
   try {
     const img = await loadImg(url);
-    const limit = isLocal ? 140000 : 300000;
-    let max = 1280, q = 0.78, out = null;
-    for (let i = 0; i < 7; i++) {
-      const sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-      const w = Math.max(1, Math.round(img.naturalWidth * sc)), h = Math.max(1, Math.round(img.naturalHeight * sc));
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
-      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
-      out = { data: c.toDataURL('image/jpeg', q), w, h };
-      if (out.data.length <= limit) break;
-      max = Math.round(max * 0.8); q = Math.max(0.5, q - 0.06);
-    }
-    return out;
+    return encodeLimited(img, img.naturalWidth, img.naturalHeight, isLocal ? 140000 : 300000, 1280, 0.78);
   } finally { URL.revokeObjectURL(url); }
 }
 let photoBusy = false;
@@ -984,6 +1017,90 @@ async function addPhoto(file) {
   } finally { photoBusy = false; }
 }
 
+/* ================= PDF → シート ================= */
+let pdfLibP = null, pdfDoc = null, pdfBusy = false;
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (!pdfLibP) pdfLibP = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = PDFJS + 'pdf.min.js';
+    sc.onload = () => { const L = window.pdfjsLib; if (!L) { pdfLibP = null; return rej(new Error('pdfjs')); } L.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; res(L); };
+    sc.onerror = () => { pdfLibP = null; rej(new Error('pdfjs')); };
+    document.head.appendChild(sc);
+  });
+  return pdfLibP;
+}
+const isPdf = f => f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
+async function openPdf(file) {
+  if (!state.group || !file || pdfBusy) return;
+  toast('PDFを読みこんでいます…');
+  let lib;
+  try { lib = await loadPdfJs(); } catch (e) { toast('PDFを開く準備ができませんでした。通信を確かめてください'); return; }
+  try {
+    const data = new Uint8Array(await file.arrayBuffer());
+    if (pdfDoc) { try { pdfDoc.destroy(); } catch (e) {} }
+    pdfDoc = await lib.getDocument({ data }).promise;
+  } catch (e) {
+    toast(e && e.name === 'PasswordException' ? 'パスワード付きのPDFは開けません' : 'このPDFは開けませんでした');
+    return;
+  }
+  const n = pdfDoc.numPages;
+  $('pdfMsg').textContent = '「' + (file.name || 'PDF') + '」（' + n + 'ページ）を、1ページずつ新しいフレームのシートにします。シートの上に書きこめます。一度に入れられるのは30ページまでです。';
+  const from = $('pdfFrom'), to = $('pdfTo'); from.textContent = ''; to.textContent = '';
+  for (let i = 1; i <= n; i++) { for (const sel of [from, to]) { const o = document.createElement('option'); o.value = i; o.textContent = i; sel.appendChild(o); } }
+  from.value = '1'; to.value = String(Math.min(n, 30));
+  $('pdfRange').hidden = n <= 1;
+  $('pdfAllWrap').hidden = !state.teacher; $('pdfAll').checked = false;
+  $('pdfProg').hidden = true; $('pdfGo').disabled = false; $('pdfCancel').disabled = false;
+  $('pdfModal').hidden = false;
+}
+function closePdf() {
+  if (pdfBusy) return;
+  $('pdfModal').hidden = true;
+  if (pdfDoc) { try { pdfDoc.destroy(); } catch (e) {} pdfDoc = null; }
+}
+async function importPdf() {
+  if (!pdfDoc || pdfBusy) return;
+  let a = +$('pdfFrom').value || 1, b = +$('pdfTo').value || a;
+  if (b < a) [a, b] = [b, a];
+  if (b - a + 1 > 30) { $('pdfProg').hidden = false; $('pdfProg').textContent = '一度に入れられるのは30ページまでです。ページの範囲をせまくしてください'; return; }
+  const groups = state.teacher && $('pdfAll').checked ? state.groups.map(g => g.id) : [state.group];
+  pdfBusy = true; $('pdfGo').disabled = true; $('pdfCancel').disabled = true;
+  const prog = t => { $('pdfProg').hidden = false; $('pdfProg').textContent = t; };
+  const limit = isLocal ? 140000 : 430000, base = Date.now();
+  let firstHere = null, done = 0, failed = false;
+  try {
+    for (let p = a; p <= b; p++) {
+      prog((p - a + 1) + ' / ' + (b - a + 1) + ' ページ目を入れています…');
+      const page = await pdfDoc.getPage(p);
+      const vp0 = page.getViewport({ scale: 1 });
+      const sc = Math.min(2000 / Math.max(vp0.width, vp0.height), 4);
+      const vp = page.getViewport({ scale: sc });
+      const cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+      const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      page.cleanup();
+      const enc = encodeLimited(cv, cv.width, cv.height, limit, 2000, 0.82);
+      cv.width = cv.height = 1;
+      const imgId = rid();
+      if (!(await write('images/' + imgId, 'set', { data: enc.data, by: uid, w: enc.w, h: enc.h, at: Date.now(), kind: 'sheet' }))) { failed = true; break; }
+      const c = { el: null }; c.p = loadImg(enc.data).then(el => (c.el = el)); imgCache.set(imgId, c);
+      const order = base + (p - a);
+      for (const gid of groups) {
+        const fid = rid(), fr = { order, bg: 'plain', sheet: imgId, sw: enc.w, sh: enc.h };
+        if (gid === state.group) { pendingFrames.add(fid); state.frames.push(Object.assign({ id: fid }, fr)); if (!firstHere) firstHere = fid; }
+        if (!(await write('groups/' + gid + '/frames/' + fid, 'set', fr))) failed = true;
+      }
+      done++;
+    }
+  } catch (e) { failed = true; }
+  pdfBusy = false;
+  $('pdfModal').hidden = true;
+  if (pdfDoc) { try { pdfDoc.destroy(); } catch (e) {} pdfDoc = null; }
+  if (firstHere) { state.frames.sort((x, y) => (x.order || 0) - (y.order || 0)); goFrame(firstHere); }
+  if (failed) toast(done ? done + 'ページ入れましたが、入らなかったページがあります' + (isLocal ? '（お試しモードは容量が小さいため）' : '') : 'PDFを入れられませんでした');
+  else toast(done + 'ページを' + (groups.length > 1 ? groups.length + 'つの班に' : '') + 'シートとして入れました');
+}
+
 /* ================= drawing a frame to canvas ================= */
 function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; }); }
 function wrapLines(g, text, maxW) {
@@ -995,11 +1112,17 @@ function wrapLines(g, text, maxW) {
   });
   return out;
 }
-async function drawFrame(entries, bg, S2) {
+async function drawFrame(entries, frm, S2) {
+  const bg = typeof frm === 'string' ? frm : (isObj(frm) ? frm.bg : null);
+  const sheet = isObj(frm) && typeof frm.sheet === 'string' ? frm : null;
   const c = document.createElement('canvas'); c.width = W * S2; c.height = H * S2;
   const g = c.getContext('2d'); g.scale(S2, S2);
   g.fillStyle = '#FCFCF9'; g.fillRect(0, 0, W, H);
   if (BG_SVG[bg]) { try { const img = await loadImg(bgData(bg)); g.fillStyle = g.createPattern(img, 'repeat'); g.fillRect(0, 0, W, H); } catch (e) {} }
+  if (sheet) {
+    const im = await getImg(sheet.sheet);
+    if (im) { const r = sheetRect(sheet.sw || im.naturalWidth, sheet.sh || im.naturalHeight); g.fillStyle = '#fff'; g.fillRect(r.x, r.y, r.w, r.h); g.drawImage(im, r.x, r.y, r.w, r.h); }
+  }
   try { await document.fonts.load('400 30px "BIZ UDPGothic"'); } catch (e) {}
   const list = entries.map(([k, v]) => [k, decodeItem(v) || v]).filter(([, it]) => isObj(it)).sort((a, b) => (a[1].z || 0) - (b[1].z || 0));
   for (const [, it] of list) {
@@ -1052,7 +1175,7 @@ async function saveCanvas(canvas, name) {
 async function exportPNG() {
   stopEdit();
   const f = curFrame();
-  const c = await drawFrame([...state.items.entries()], f && f.bg, 2);
+  const c = await drawFrame([...state.items.entries()], f, 2);
   const n = state.frames.findIndex(x => x.id === state.frameId) + 1;
   saveCanvas(c, (state.title || 'ボード') + '-' + gName(state.group) + '-フレーム' + n);
 }
@@ -1070,7 +1193,10 @@ async function submitFrame() {
   const sid = rid(), at = Date.now();
   const items = {}; state.items.forEach((v, k) => { items[k] = encodeItem(v); });
   const name = state.teacher ? '先生' : state.myName;
-  const okData = await write('subData/' + sid, 'set', { uid, name, g: state.group, fn: n, at, title: state.title || '', bg: (curFrame() && curFrame().bg) || 'plain', items });
+  const cf = curFrame() || {};
+  const sub = { uid, name, g: state.group, fn: n, at, title: state.title || '', bg: cf.bg || 'plain', items };
+  if (typeof cf.sheet === 'string') Object.assign(sub, { sheet: cf.sheet, sw: cf.sw, sh: cf.sh });
+  const okData = await write('subData/' + sid, 'set', sub);
   const okIdx = okData && await write('subIndex/' + uid + '/' + sid, 'set', { name, g: state.group, fn: n, at });
   toast(okIdx ? '先生に提出しました' : '提出できませんでした。通信を確かめて、もう一度ためしてください');
   subBusy = false; $('submitBtn').disabled = false;
@@ -1165,7 +1291,7 @@ async function loadThumbs(list) {
     try {
       const d = await getSub(x.sid);
       if (!d) { th.textContent = '読みこめませんでした'; continue; }
-      const c = await drawFrame(isObj(d.items) ? Object.entries(d.items) : [], d.bg, 0.25);
+      const c = await drawFrame(isObj(d.items) ? Object.entries(d.items) : [], d, 0.25);
       const url = c.toDataURL('image/jpeg', 0.8);
       thumbCache.set(x.sid, url);
       if (run !== thumbRun) return;
@@ -1201,7 +1327,7 @@ async function openViewer(x, mode) {
     if (!viewing || viewing.x !== x) return;
     if (!isObj(d)) { toast('提出物を読み込めませんでした'); return; }
     viewing.data = d;
-    const c = await drawFrame(isObj(d.items) ? Object.entries(d.items) : [], d.bg, 1);
+    const c = await drawFrame(isObj(d.items) ? Object.entries(d.items) : [], d, 1);
     if (!viewing || viewing.x !== x) return;
     $('vImg').src = c.toDataURL('image/png');
   } catch (e) { toast('提出物を読み込めませんでした'); }
@@ -1216,7 +1342,7 @@ async function saveReview() {
 async function saveViewed() {
   if (!viewing || !viewing.data) return;
   const d = viewing.data, x = viewing.x;
-  const c = await drawFrame(isObj(d.items) ? Object.entries(d.items) : [], d.bg, 2);
+  const c = await drawFrame(isObj(d.items) ? Object.entries(d.items) : [], d, 2);
   saveCanvas(c, gName(x.g) + '-' + (viewing.mode === 'inbox' ? String(x.name || '提出') : '提出') + '-フレーム' + (x.fn || ''));
 }
 
@@ -1499,7 +1625,7 @@ function paneDraw(p) {
   p.timer = setTimeout(async () => {
     if (!panes.includes(p)) return;
     const fr = p.frames.find(x => x.id === p.f);
-    const c = await drawFrame([...p.items.entries()], fr && fr.bg, 1);
+    const c = await drawFrame([...p.items.entries()], fr, 1);
     if (!panes.includes(p) || p.denied) return;
     const old = p.cv.querySelector('canvas'); if (old) old.remove();
     p.cv.insertBefore(c, p.msg);
@@ -1602,7 +1728,9 @@ async function distribute() {
   for (const g of gs) {
     const fid = rid(), obj = {};
     items.forEach(v => { const c = Object.assign({}, v, { by: uid, ts: Date.now() }); obj[rid()] = encodeItem(c); });
-    const ok1 = await write('groups/' + g + '/frames/' + fid, 'set', { order, bg });
+    const fr = { order, bg }, cf = curFrame();
+    if (cf && typeof cf.sheet === 'string') Object.assign(fr, { sheet: cf.sheet, sw: cf.sw, sh: cf.sh });
+    const ok1 = await write('groups/' + g + '/frames/' + fid, 'set', fr);
     const ok2 = !items.length || await write('groups/' + g + '/items/' + fid, 'set', obj);
     okAll = okAll && ok1 && ok2;
   }
@@ -1616,7 +1744,10 @@ const presTrail = [];
 function syncPresent() {
   if (!state.presenting || !state.group || !state.frameId) return;
   const n = state.frames.findIndex(f => f.id === state.frameId) + 1;
-  S.write('meta/present', 'set', { on: true, g: state.group, f: state.frameId, fn: n, by: uid, t: Date.now() }).catch(() => {});
+  const cf = curFrame() || {};
+  const pr = { on: true, g: state.group, f: state.frameId, fn: n, by: uid, t: Date.now(), bg: cf.bg || 'plain' };
+  if (typeof cf.sheet === 'string') Object.assign(pr, { sheet: cf.sheet, sw: cf.sw, sh: cf.sh });
+  S.write('meta/present', 'set', pr).catch(() => {});
 }
 let lastPointerL = false;
 function pushPointer(o) {
@@ -1647,7 +1778,7 @@ function onPresent(v) {
   state.present = p;
   if (state.teacher) { state.presenting = !!(p && p.by === uid); renderPresentBtn(); return; }
   if (!p) { closePresent(); return; }
-  const key = p.g + '/' + p.f;
+  const key = p.g + '/' + p.f + '/' + (p.sheet || '') + '/' + (p.bg || '');
   $('pSub').textContent = gName(p.g) + '・フレーム ' + (p.fn || '');
   if (key !== presKey) {
     presKey = key;
@@ -1671,7 +1802,7 @@ function drawPresent() {
   clearTimeout(presDrawT);
   presDrawT = setTimeout(async () => {
     const p = state.present; if (!p) return;
-    const c = await drawFrame([...presItems.entries()], 'plain', 1);
+    const c = await drawFrame([...presItems.entries()], p, 1);
     const g = $('pCanvas').getContext('2d'); g.clearRect(0, 0, W, H); g.drawImage(c, 0, 0);
   }, 200);
 }
@@ -1897,15 +2028,23 @@ function bindUI() {
   $('rAuto').onclick = autoCode;
   $('photoBtn').onclick = () => { if (!state.group) return; $('photoIn').value = ''; $('photoIn').click(); };
   $('photoIn').onchange = () => { const f = $('photoIn').files && $('photoIn').files[0]; if (f) addPhoto(f); };
+  $('pdfBtn').onclick = () => { if (!state.group) return; $('pdfIn').value = ''; $('pdfIn').click(); };
+  $('pdfIn').onchange = () => { const f = $('pdfIn').files && $('pdfIn').files[0]; if (f) openPdf(f); };
+  $('pdfGo').onclick = importPdf;
+  $('pdfCancel').onclick = closePdf;
   document.addEventListener('paste', e => {
     const tag = (e.target && e.target.tagName) || '';
     if (state.editing || tag === 'INPUT' || tag === 'TEXTAREA' || anyModal() || !state.group) return;
-    const f = [...((e.clipboardData && e.clipboardData.files) || [])].find(x => /^image\//.test(x.type));
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+    const pdf = files.find(isPdf); if (pdf) { e.preventDefault(); openPdf(pdf); return; }
+    const f = files.find(x => /^image\//.test(x.type));
     if (f) { e.preventDefault(); addPhoto(f); }
   });
   stage.addEventListener('dragover', e => { if (state.group) e.preventDefault(); });
   stage.addEventListener('drop', e => {
-    const f = [...((e.dataTransfer && e.dataTransfer.files) || [])].find(x => /^image\//.test(x.type));
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+    const pdf = files.find(isPdf); if (pdf && state.group) { e.preventDefault(); openPdf(pdf); return; }
+    const f = files.find(x => /^image\//.test(x.type));
     if (f && state.group) { e.preventDefault(); addPhoto(f); }
   });
   $('tClose').onclick = closeTeacher;
@@ -1947,7 +2086,7 @@ function bindUI() {
   document.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) || '';
     if (anyModal()) {
-      if (e.key === 'Escape') { if (!$('cModal').hidden) { closeCompare(); return; } ['sModal', 'vModal', 'gModal', 'tModal', 'rmModal', 'dModal'].forEach(k => $(k).hidden = true); viewing = null; }
+      if (e.key === 'Escape') { if (!$('cModal').hidden) { closeCompare(); return; } ['sModal', 'vModal', 'gModal', 'tModal', 'rmModal', 'dModal'].forEach(k => $(k).hidden = true); closePdf(); viewing = null; }
       return;
     }
     if (state.editing || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
